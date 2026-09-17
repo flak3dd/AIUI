@@ -140,6 +140,8 @@ export function ChatStage({
                 ? 'Saving Memory...'
                 : m.content
           }
+          reasoning={m.role === 'assistant' ? m.reasoning : undefined}
+          reasoningStreaming={Boolean(isStreaming && m.reasoning)}
           msgId={m.id}
           inlineExecResults={inlineExecResults}
           executingInlineKey={executingInlineKey}

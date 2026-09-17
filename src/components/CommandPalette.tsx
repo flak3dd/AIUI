@@ -274,7 +274,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       },
       {
         id: 'ctrl-deep-build',
-        title: `Toggle Deep Thinking / Thorough Build Mode (${deepBuild ? 'Currently ON' : 'Currently OFF'})`,
+        title: `Toggle Deep Reasoning (${deepBuild ? 'Currently ON' : 'Currently OFF'})`,
         category: 'Controls',
         icon: '🧠',
         badge: deepBuild ? 'ON' : 'OFF',

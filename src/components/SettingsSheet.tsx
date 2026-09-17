@@ -203,9 +203,9 @@ export function SettingsSheet({
                     checked={Boolean(settings.deepBuild)}
                     onChange={(e) => persist({ ...settings, deepBuild: e.target.checked })}
                   />
-                  Deep Build mode
+                  Deep Reasoning
                 </label>
-                <span className="hint">Exhaustive plans, full implementations, and tests.</span>
+                <span className="hint">Request model thinking traces (ThoughtTrail) and use a larger agent budget when Agent mode is on.</span>
               </div>
               <div className="field">
                 <label className="chip clickable" style={{ display: 'inline-flex', gap: 6 }}>
