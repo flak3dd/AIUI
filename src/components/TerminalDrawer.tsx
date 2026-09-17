@@ -23,6 +23,8 @@ export interface TerminalDrawerProps {
   handleTermKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void
   handleCopyOutput: (text: string, idx: number) => void
   toggleCollapseOutput: (idx: number) => void
+  activeWorkspaceDir?: string
+  onOpenExplorer?: () => void
 }
 
 export function TerminalDrawer(props: TerminalDrawerProps) {
@@ -48,6 +50,8 @@ export function TerminalDrawer(props: TerminalDrawerProps) {
     handleTermKeyDown,
     handleCopyOutput,
     toggleCollapseOutput,
+    activeWorkspaceDir,
+    onOpenExplorer,
   } = props
 
   if (!open) return null
@@ -83,6 +87,17 @@ export function TerminalDrawer(props: TerminalDrawerProps) {
                 ? '📦 POD'
                 : '💻 MAC'}
             </span>
+            {activeWorkspaceDir && (
+              <button
+                type="button"
+                className="term-chip"
+                style={{ fontSize: 10, padding: '2px 8px', height: 20, cursor: onOpenExplorer ? 'pointer' : 'default' }}
+                onClick={onOpenExplorer}
+                title="Active workspace directory. Click to open Workspace Explorer."
+              >
+                📁 {activeWorkspaceDir.replace('/Users/adminuser', '~')}
+              </button>
+            )}
             <span style={{ fontSize: 10, color: 'var(--text-dim)', fontWeight: 400 }}>
               {termHeightMode === 'docked' && terminalLogs.length > 0
                 ? `Last: ${terminalLogs[terminalLogs.length - 1].command.slice(0, 32)} (EXIT ${terminalLogs[terminalLogs.length - 1].exitCode ?? 0})`

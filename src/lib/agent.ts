@@ -7,6 +7,8 @@ import type { ProviderConfig } from './providers'
 import {
   executeBashCommand,
   getStoredTarget,
+  getStoredWorkspaceDir,
+  setStoredWorkspaceDir,
   getSandboxBaseUrl,
   spawnLinuxContainer,
   destroyLinuxContainer,
@@ -302,6 +304,49 @@ export const AGENT_TOOLS = [
           },
         },
         required: ['templateId'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'set_workspace_dir',
+      description:
+        'Set or change the active working directory for bash commands, file operations, and tests across local Mac or remote cluster (e.g. /Users/adminuser/AIUI, /Users/adminuser/r, /Users/adminuser/log-sorter, /tmp/spark-sandboxes).',
+      parameters: {
+        type: 'object',
+        properties: {
+          directory: {
+            type: 'string',
+            description: 'The target absolute or user-relative directory to switch to',
+          },
+          target: {
+            type: 'string',
+            enum: ['local_mac', 'dgx_spark'],
+            description: 'Target execution host (default: local_mac)',
+          },
+        },
+        required: ['directory'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_workspace_dir',
+      description:
+        'Inspect the currently configured active workspace directory and available workspace presets.',
+      parameters: {
+        type: 'object',
+        properties: {
+          target: {
+            type: 'string',
+            enum: ['local_mac', 'dgx_spark'],
+            description: 'Target execution host (default: local_mac)',
+          },
+        },
         additionalProperties: false,
       },
     },
@@ -635,6 +680,43 @@ export async function runTool(
     })
   }
 
+  if (name === 'set_workspace_dir') {
+    const dir = String(args.directory || args.dir || '').trim()
+    if (!dir) {
+      return JSON.stringify({ ok: false, error: 'No directory specified' })
+    }
+    const target = (args.target as ExecutionTarget) || getStoredTarget()
+    setStoredWorkspaceDir(dir)
+    invalidateFileCache()
+    const checkRes = await executeBashCommand('pwd', target, undefined, undefined, dir)
+    if (onBashResult) onBashResult(checkRes)
+    return JSON.stringify({
+      ok: checkRes.ok,
+      activeWorkspaceDir: dir,
+      currentDirectory: checkRes.stdout.trim(),
+      target,
+      error: checkRes.error || (checkRes.ok ? undefined : checkRes.stderr),
+    })
+  }
+
+  if (name === 'get_workspace_dir') {
+    const target = (args.target as ExecutionTarget) || getStoredTarget()
+    const currentDir = getStoredWorkspaceDir(target)
+    return JSON.stringify({
+      ok: true,
+      activeWorkspaceDir: currentDir,
+      target,
+      presets: [
+        '/Users/adminuser/AIUI',
+        '/Users/adminuser/r',
+        '/Users/adminuser/log-sorter',
+        '/Users/adminuser/abliterated_ui',
+        '/tmp/spark-sandboxes',
+        '/mnt/nvme/ocr_pipeline/workspaces',
+      ],
+    })
+  }
+
   return JSON.stringify({ ok: false, error: `Unknown tool: ${name}` })
 }
 
@@ -800,7 +882,7 @@ If the user asks you to run or change something and Agent Mode is off, explain t
 
 export const AGENT_SYSTEM = `You are Abliterated AI in Agent Mode — an autonomous systems engineer with live tools.
 
-Tools: bash, write_file, read_file, list_models, http_get_json, now, memory_search, memory_checkpoint, spawn_linux_container, destroy_linux_container, list_linux_containers, list_scaffolds, apply_scaffold.
+Tools: bash, write_file, read_file, list_models, http_get_json, now, memory_search, memory_checkpoint, spawn_linux_container, destroy_linux_container, list_linux_containers, list_scaffolds, apply_scaffold, set_workspace_dir, get_workspace_dir.
 Prefer native tool_calls. Only use <run>command</run> or fenced bash when tools are unavailable.
 Never fabricate stdout/stderr — only trust real tool results.
 
@@ -833,7 +915,8 @@ export function buildTurnContextBlock(opts: {
   avoid?: string | null
   round?: number
 }): string {
-  const lines = ['=== CURRENT TURN CONTEXT ===', `Goal: ${opts.goal}`]
+  const currentWs = getStoredWorkspaceDir()
+  const lines = ['=== CURRENT TURN CONTEXT ===', `Goal: ${opts.goal}`, `Active Workspace: ${currentWs}`]
   if (opts.stage) lines.push(`Stage: ${opts.stage}`)
   if (opts.round != null) lines.push(`Round: ${opts.round}`)
   if (opts.lastFailed) lines.push(`Last failed: ${opts.lastFailed}`)

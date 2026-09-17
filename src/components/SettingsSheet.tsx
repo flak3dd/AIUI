@@ -217,6 +217,45 @@ export function SettingsSheet({
                   On-device RAG
                 </label>
               </div>
+              <div className="field">
+                <label>Active Workspace Directory</label>
+                <input
+                  value={settings.workspaceDir || '/Users/adminuser/AIUI'}
+                  onChange={(e) => persist({ ...settings, workspaceDir: e.target.value.trim() })}
+                  placeholder="/Users/adminuser/AIUI"
+                />
+                <div className="row" style={{ gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className="btn-sm ghost"
+                    onClick={() => persist({ ...settings, workspaceDir: '/Users/adminuser/AIUI' })}
+                  >
+                    ~/AIUI
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-sm ghost"
+                    onClick={() => persist({ ...settings, workspaceDir: '/Users/adminuser/r' })}
+                  >
+                    ~/r
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-sm ghost"
+                    onClick={() => persist({ ...settings, workspaceDir: '/Users/adminuser/log-sorter' })}
+                  >
+                    ~/log-sorter
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-sm ghost"
+                    onClick={() => persist({ ...settings, workspaceDir: '/tmp/spark-sandboxes' })}
+                  >
+                    /tmp Sandbox
+                  </button>
+                </div>
+                <span className="hint">Base directory for sandbox files, bash commands, and terminal execution.</span>
+              </div>
             </>
           )}
 

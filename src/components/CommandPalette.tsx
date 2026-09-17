@@ -34,6 +34,8 @@ export interface CommandPaletteProps {
   onExportZip?: () => void
   onToggleRag?: () => void
   clusterRag?: boolean
+  activeWorkspaceDir?: string
+  onChangeWorkspaceDir?: (dir: string) => void
 }
 
 interface PaletteAction {
@@ -77,6 +79,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   onExportZip,
   onToggleRag,
   clusterRag,
+  activeWorkspaceDir,
+  onChangeWorkspaceDir,
 }) => {
   const [query, setQuery] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
@@ -170,6 +174,60 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         icon: '🗂️',
         hint: 'Browse files on /mnt/nvme & sandboxes',
         run: onOpenExplorer,
+      },
+      {
+        id: 'ws-dir-aiui',
+        title: 'Switch Workspace: ~/AIUI (/Users/adminuser/AIUI)',
+        category: 'Workspace',
+        icon: '⚡',
+        badge: (activeWorkspaceDir || '/Users/adminuser/AIUI') === '/Users/adminuser/AIUI' ? 'ACTIVE' : undefined,
+        hint: 'Active workspace for bash commands, tests, and builds',
+        run: () => onChangeWorkspaceDir && onChangeWorkspaceDir('/Users/adminuser/AIUI'),
+      },
+      {
+        id: 'ws-dir-r',
+        title: 'Switch Workspace: ~/r (/Users/adminuser/r)',
+        category: 'Workspace',
+        icon: '🚗',
+        badge: activeWorkspaceDir === '/Users/adminuser/r' ? 'ACTIVE' : undefined,
+        hint: 'Direct checkout & rego worker test runner',
+        run: () => onChangeWorkspaceDir && onChangeWorkspaceDir('/Users/adminuser/r'),
+      },
+      {
+        id: 'ws-dir-log-sorter',
+        title: 'Switch Workspace: ~/log-sorter (/Users/adminuser/log-sorter)',
+        category: 'Workspace',
+        icon: '📋',
+        badge: activeWorkspaceDir === '/Users/adminuser/log-sorter' ? 'ACTIVE' : undefined,
+        hint: 'Telemetry log sorting and parsing pipelines',
+        run: () => onChangeWorkspaceDir && onChangeWorkspaceDir('/Users/adminuser/log-sorter'),
+      },
+      {
+        id: 'ws-dir-abliterated-ui',
+        title: 'Switch Workspace: ~/abliterated_ui (/Users/adminuser/abliterated_ui)',
+        category: 'Workspace',
+        icon: '🔥',
+        badge: activeWorkspaceDir === '/Users/adminuser/abliterated_ui' ? 'ACTIVE' : undefined,
+        hint: 'Abliterated UI web client codebase',
+        run: () => onChangeWorkspaceDir && onChangeWorkspaceDir('/Users/adminuser/abliterated_ui'),
+      },
+      {
+        id: 'ws-dir-tmp-sandbox',
+        title: 'Switch Workspace: Spark Sandboxes (/tmp/spark-sandboxes)',
+        category: 'Workspace',
+        icon: '🧪',
+        badge: activeWorkspaceDir === '/tmp/spark-sandboxes' ? 'ACTIVE' : undefined,
+        hint: 'Ephemeral sandbox execution directory',
+        run: () => onChangeWorkspaceDir && onChangeWorkspaceDir('/tmp/spark-sandboxes'),
+      },
+      {
+        id: 'ws-dir-remote-nvme',
+        title: 'Switch Workspace: Remote NVMe (/mnt/nvme/ocr_pipeline/workspaces)',
+        category: 'Workspace',
+        icon: '🚀',
+        badge: activeWorkspaceDir === '/mnt/nvme/ocr_pipeline/workspaces' ? 'ACTIVE' : undefined,
+        hint: 'High-speed remote NVMe storage on DGX Spark',
+        run: () => onChangeWorkspaceDir && onChangeWorkspaceDir('/mnt/nvme/ocr_pipeline/workspaces'),
       },
       {
         id: 'ws-branch',
@@ -337,6 +395,17 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     onToggleAutoRecall,
     onToggleAutoCheckpoint,
     onOpenSettings,
+    activeWorkspaceDir,
+    onChangeWorkspaceDir,
+    onToggleHistory,
+    onNewChat,
+    agentMode,
+    onToggleAgentMode,
+    deepBuild,
+    onToggleDeepBuild,
+    clusterRag,
+    onToggleRag,
+    onExportZip,
   ])
 
   const filtered = useMemo(() => {

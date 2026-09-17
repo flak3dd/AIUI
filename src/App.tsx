@@ -38,6 +38,7 @@ import {
   setSandboxBaseUrl,
   setStoredAutoBash,
   setStoredTarget,
+  setStoredWorkspaceDir,
   type BashExecResult,
   type ExecutionTarget,
   type SandboxStatus,
@@ -519,11 +520,20 @@ function MainApp() {
     setExecutingCmd(true)
     setTermHistory((prev) => (prev.length > 0 && prev[prev.length - 1] === cmd ? prev : [...prev, cmd]))
     setHistoryIndex(-1)
-    const result = await executeBashCommand(cmd, target)
+    const result = await executeBashCommand(cmd, target, undefined, undefined, settings.workspaceDir)
     setTerminalLogs((prev) => [...prev, result])
     setExecutingCmd(false)
     return result
   }
+
+  const handleWorkspaceDirChange = useCallback(
+    (dir: string) => {
+      const trimmed = (dir || '').trim()
+      setStoredWorkspaceDir(trimmed)
+      persist({ ...settings, workspaceDir: trimmed })
+    },
+    [settings, persist],
+  )
 
   const handleTermKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'ArrowUp') {
@@ -1603,8 +1613,8 @@ Assistant: ${finalContent}`,
                   >
                     <span className="fui-item-icon">🗂️</span>
                     <div className="fui-item-info">
-                      <span className="fui-item-name">File explorer</span>
-                      <span className="fui-item-desc">Browse local /tmp and DGX /mnt/nvme</span>
+                      <span className="fui-item-name">Workspace Explorer</span>
+                      <span className="fui-item-desc">{settings.workspaceDir ? settings.workspaceDir.replace('/Users/adminuser', '~') : '~/AIUI'}</span>
                     </div>
                     <kbd className="fui-item-kbd">⌘O</kbd>
                   </button>
@@ -1861,6 +1871,8 @@ Assistant: ${finalContent}`,
         handleTermKeyDown={handleTermKeyDown}
         handleCopyOutput={handleCopyOutput}
         toggleCollapseOutput={toggleCollapseOutput}
+        activeWorkspaceDir={settings.workspaceDir}
+        onOpenExplorer={() => setExplorerOpen(true)}
       />
 
       <SettingsSheet
@@ -1917,6 +1929,8 @@ Assistant: ${finalContent}`,
         onExportZip={handleExportZip}
         onToggleRag={() => persist({ ...settings, clusterRag: settings.clusterRag === false })}
         clusterRag={settings.clusterRag}
+        activeWorkspaceDir={settings.workspaceDir}
+        onChangeWorkspaceDir={handleWorkspaceDirChange}
       />
 
       {/* Remote NVMe & Workspace Explorer */}
@@ -1925,6 +1939,8 @@ Assistant: ${finalContent}`,
         onClose={() => setExplorerOpen(false)}
         currentTarget={bashTarget}
         onSwitchTarget={handleTargetChange}
+        activeWorkspaceDir={settings.workspaceDir}
+        onChangeWorkspaceDir={handleWorkspaceDirChange}
       />
 
       {/* Chat History & Multi-Session Drawer */}

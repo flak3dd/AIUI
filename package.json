@@ -20,7 +20,8 @@
     "git:inspect": "node ./scripts/git-inspect.mjs",
     "git:push": "node ./scripts/git-sync.mjs",
     "scaffolds:check": "node ./scripts/compare-scaffolds.mjs",
-    "scaffolds:verify": "node ./scripts/write-scaffolds.mjs"
+    "scaffolds:verify": "node ./scripts/write-scaffolds.mjs",
+    "env:list": "node ./scripts/list-env-values.mjs"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.14.13",

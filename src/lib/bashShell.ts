@@ -70,6 +70,30 @@ const DEFAULT_SANDBOX_URL = 'http://127.0.0.1:17330';
 const STORAGE_TARGET_KEY = 'abliterated_bash_target';
 const STORAGE_AUTO_EXEC_KEY = 'abliterated_auto_bash_enabled';
 const STORAGE_SANDBOX_URL_KEY = 'abliterated_sandbox_url';
+const STORAGE_WORKSPACE_DIR_KEY = 'abliterated_workspace_dir';
+
+export function getStoredWorkspaceDir(target: ExecutionTarget = getStoredTarget()): string {
+  try {
+    const val = localStorage.getItem(STORAGE_WORKSPACE_DIR_KEY);
+    if (val && val.trim()) return val.trim();
+  } catch {
+    /* ignore */
+  }
+  return target === 'dgx_spark' ? '/mnt/nvme/ocr_pipeline/workspaces' : '/Users/adminuser/AIUI';
+}
+
+export function setStoredWorkspaceDir(dir: string) {
+  try {
+    const trimmed = (dir || '').trim();
+    if (trimmed) {
+      localStorage.setItem(STORAGE_WORKSPACE_DIR_KEY, trimmed);
+    } else {
+      localStorage.removeItem(STORAGE_WORKSPACE_DIR_KEY);
+    }
+  } catch {
+    /* ignore */
+  }
+}
 
 export function getStoredTarget(): ExecutionTarget {
   try {
@@ -175,6 +199,7 @@ export async function executeBashCommand(
   target: ExecutionTarget = getStoredTarget(),
   envId = 'web_session',
   baseUrl = getSandboxBaseUrl(),
+  cwd?: string,
 ): Promise<BashExecResult> {
   const t0 = performance.now();
   const timestamp = new Date().toLocaleTimeString();
@@ -194,6 +219,8 @@ export async function executeBashCommand(
     };
   }
 
+  const workingDir = cwd || getStoredWorkspaceDir(target);
+
   try {
     const res = await fetch(`${baseUrl}/api/sandbox/exec`, {
       method: 'POST',
@@ -202,6 +229,7 @@ export async function executeBashCommand(
         envId,
         cmd: trimmed,
         target,
+        cwd: workingDir,
       }),
       signal: AbortSignal.timeout(60000),
     });

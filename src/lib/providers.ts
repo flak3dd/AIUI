@@ -129,6 +129,7 @@ export interface StoredSettings {
   rainMoodManual?: string
   laserMode?: LaserMode
   laserLevelManual?: AbliterationLevel
+  workspaceDir?: string
 }
 
 /**
@@ -215,6 +216,7 @@ export function defaultSettings(): StoredSettings {
     rainMoodManual: 'focus',
     laserMode: 'auto',
     laserLevelManual: 3,
+    workspaceDir: '/Users/adminuser/AIUI',
   }
 }
 

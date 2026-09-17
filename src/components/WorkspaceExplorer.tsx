@@ -1,29 +1,42 @@
 import React, { useEffect, useState } from 'react'
-import { executeBashCommand, type ExecutionTarget } from '../lib/bashShell'
+import {
+  executeBashCommand,
+  getStoredWorkspaceDir,
+  setStoredWorkspaceDir,
+  type ExecutionTarget,
+} from '../lib/bashShell'
 
 export interface WorkspaceExplorerProps {
   isOpen: boolean
   onClose: () => void
   currentTarget: ExecutionTarget
   onSwitchTarget: (t: ExecutionTarget) => void
+  activeWorkspaceDir?: string
+  onChangeWorkspaceDir?: (dir: string) => void
 }
 
-/** Writable roots per execution target (GX10 /mnt/nvme itself is root-owned). */
+/** Default writable roots per execution target */
 const WORKSPACE_ROOTS: Record<Exclude<ExecutionTarget, 'container'>, string> = {
-  local_mac: '/tmp/spark-sandboxes',
+  local_mac: '/Users/adminuser/AIUI',
   dgx_spark: '/mnt/nvme/ocr_pipeline/workspaces',
 }
 
-function defaultPathFor(target: ExecutionTarget): string {
-  if (target === 'dgx_spark') return WORKSPACE_ROOTS.dgx_spark
-  if (target === 'local_mac') return WORKSPACE_ROOTS.local_mac
-  return WORKSPACE_ROOTS.local_mac
-}
+export const WORKSPACE_PRESETS: Array<{ label: string; path: string; target: ExecutionTarget }> = [
+  { label: '~/AIUI (AI Web App)', path: '/Users/adminuser/AIUI', target: 'local_mac' },
+  { label: '~/r (Rego & PPSR Ops)', path: '/Users/adminuser/r', target: 'local_mac' },
+  { label: '~/log-sorter', path: '/Users/adminuser/log-sorter', target: 'local_mac' },
+  { label: '~/abliterated_ui (Studio)', path: '/Users/adminuser/abliterated_ui', target: 'local_mac' },
+  { label: 'Mac Sandbox (/tmp)', path: '/tmp/spark-sandboxes', target: 'local_mac' },
+  { label: 'GX10 NVMe Workspaces', path: '/mnt/nvme/ocr_pipeline/workspaces', target: 'dgx_spark' },
+]
 
-function isUnderRoot(path: string, root: string): boolean {
-  const p = path.replace(/\/+$/, '') || '/'
-  const r = root.replace(/\/+$/, '') || '/'
-  return p === r || p.startsWith(r + '/')
+function defaultPathFor(target: ExecutionTarget, activeWorkspace?: string): string {
+  if (activeWorkspace && activeWorkspace.trim()) {
+    return activeWorkspace.trim()
+  }
+  const stored = getStoredWorkspaceDir(target)
+  if (stored && stored.trim()) return stored.trim()
+  return target === 'dgx_spark' ? WORKSPACE_ROOTS.dgx_spark : WORKSPACE_ROOTS.local_mac
 }
 
 interface FileEntry {
@@ -38,33 +51,35 @@ export const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = ({
   onClose,
   currentTarget,
   onSwitchTarget,
+  activeWorkspaceDir,
+  onChangeWorkspaceDir,
 }) => {
-  const [targetPath, setTargetPath] = useState(() => defaultPathFor(currentTarget))
+  const [targetPath, setTargetPath] = useState(() => defaultPathFor(currentTarget, activeWorkspaceDir))
   const [files, setFiles] = useState<FileEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [fileContent, setFileContent] = useState<string | null>(null)
   const [contentLoading, setContentLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [creatingFolder, setCreatingFolder] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
   const [creating, setCreating] = useState(false)
 
+  const currentActiveWorkspace = activeWorkspaceDir || getStoredWorkspaceDir(currentTarget)
+
   useEffect(() => {
-    setTargetPath(defaultPathFor(currentTarget))
-  }, [currentTarget])
+    setTargetPath(defaultPathFor(currentTarget, activeWorkspaceDir))
+  }, [currentTarget, activeWorkspaceDir])
 
   const loadDirectory = async (dir: string, target: ExecutionTarget) => {
     setLoading(true)
     setError(null)
+    setNotice(null)
     setSelectedFile(null)
     setFileContent(null)
     try {
-      const res = await executeBashCommand(
-        `ls -la "${dir}" 2>&1`,
-        target,
-        dir
-      )
+      const res = await executeBashCommand(`ls -la "${dir}" 2>&1`, target, 'web_session', undefined, dir)
       if (!res.ok) {
         setError(`Failed to read directory (${res.exitCode}): ${res.stderr || res.stdout}`)
         setFiles([])
@@ -92,7 +107,7 @@ export const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = ({
         })
       }
 
-      // Sort: dirs first, then files
+      // Sort: directories first, then filenames alphabetically
       parsed.sort((a, b) => {
         if (a.isDir && !b.isDir) return -1
         if (!a.isDir && b.isDir) return 1
@@ -118,11 +133,7 @@ export const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = ({
     setContentLoading(true)
     const filePath = `${targetPath.replace(/\/$/, '')}/${name}`
     try {
-      const res = await executeBashCommand(
-        `head -n 250 "${filePath}" 2>&1`,
-        currentTarget,
-        targetPath
-      )
+      const res = await executeBashCommand(`head -n 250 "${filePath}" 2>&1`, currentTarget, 'web_session', undefined, targetPath)
       setFileContent(res.stdout || res.stderr || '(empty file)')
     } catch (err: any) {
       setFileContent(`Error reading file: ${err?.message || String(err)}`)
@@ -136,36 +147,37 @@ export const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = ({
     setTargetPath(next)
   }
 
-  const workspaceRoot =
-    currentTarget === 'dgx_spark' ? WORKSPACE_ROOTS.dgx_spark : WORKSPACE_ROOTS.local_mac
-
   const navigateUp = () => {
     const parts = targetPath.split('/').filter(Boolean)
     if (parts.length <= 1) return
     parts.pop()
     const next = '/' + parts.join('/')
-    // Keep GX10 creates inside the writable workspaces tree; browsing above /mnt/nvme is useless
-    if (currentTarget === 'dgx_spark' && !isUnderRoot(next, '/mnt/nvme/ocr_pipeline')) {
-      setTargetPath(WORKSPACE_ROOTS.dgx_spark)
-      return
-    }
-    if (currentTarget === 'local_mac' && !isUnderRoot(next, WORKSPACE_ROOTS.local_mac)) {
-      setTargetPath(WORKSPACE_ROOTS.local_mac)
-      return
-    }
     setTargetPath(next)
   }
 
-  const sanitizeFolderName = (raw: string): string | null => {
-    const name = raw.trim()
-    if (!name) return null
-    if (name === '.' || name === '..') return null
-    if (/[\\/]/.test(name)) return null
-    if (!/^[A-Za-z0-9][A-Za-z0-9._ -]{0,127}$/.test(name)) return null
-    return name
+  const handleSetActiveWorkspace = (path: string) => {
+    const cleanPath = path.replace(/\/+$/, '') || '/'
+    setStoredWorkspaceDir(cleanPath)
+    if (onChangeWorkspaceDir) {
+      onChangeWorkspaceDir(cleanPath)
+    }
+    setNotice(`Active workspace set to: ${cleanPath}`)
+    setTimeout(() => setNotice(null), 3000)
   }
 
-  const shellSingleQuote = (value: string) => "'" + value.replace(/'/g, `'"'"'`) + "'"
+  const handleSelectPreset = (preset: (typeof WORKSPACE_PRESETS)[number]) => {
+    if (preset.target !== currentTarget) {
+      onSwitchTarget(preset.target)
+    }
+    setTargetPath(preset.path)
+    handleSetActiveWorkspace(preset.path)
+  }
+
+  const sanitizeFolderName = (raw: string) => {
+    return raw.trim().replace(/[/\\:*?"<>|]/g, '')
+  }
+
+  const shellSingleQuote = (s: string) => `'${s.replace(/'/g, "'\\''")}'`
 
   const createFolder = async () => {
     const name = sanitizeFolderName(newFolderName)
@@ -176,18 +188,7 @@ export const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = ({
     setCreating(true)
     setError(null)
 
-    // /mnt/nvme is root-owned — always create under the writable workspace root
-    let parent = targetPath.replace(/\/$/, '') || '/'
-    let redirected = false
-    if (currentTarget === 'dgx_spark' && !isUnderRoot(parent, WORKSPACE_ROOTS.dgx_spark)) {
-      parent = WORKSPACE_ROOTS.dgx_spark
-      redirected = true
-    }
-    if (currentTarget === 'local_mac' && !isUnderRoot(parent, WORKSPACE_ROOTS.local_mac)) {
-      parent = WORKSPACE_ROOTS.local_mac
-      redirected = true
-    }
-
+    const parent = targetPath.replace(/\/$/, '') || '/'
     const full = `${parent}/${name}`
     const quotedParent = shellSingleQuote(parent)
     const quoted = shellSingleQuote(full)
@@ -195,22 +196,17 @@ export const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = ({
       const res = await executeBashCommand(
         `mkdir -p -- ${quotedParent} ${quoted} && ls -ld -- ${quoted}`,
         currentTarget,
+        'web_session',
+        undefined,
         parent,
       )
       if (!res.ok) {
         const detail = res.stderr || res.stdout || `exit ${res.exitCode}`
-        setError(
-          detail.includes('Permission denied')
-            ? `Permission denied creating ${full}. On GX10 use ${WORKSPACE_ROOTS.dgx_spark}/ (not /mnt/nvme).`
-            : `Failed to create folder: ${detail}`,
-        )
+        setError(`Failed to create folder: ${detail}`)
         return
       }
       setNewFolderName('')
       setCreatingFolder(false)
-      if (redirected || parent !== targetPath.replace(/\/$/, '')) {
-        setTargetPath(parent)
-      }
       await loadDirectory(parent, currentTarget)
     } catch (err: any) {
       setError(err?.message || 'Error creating folder')
@@ -221,26 +217,28 @@ export const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = ({
 
   if (!isOpen) return null
 
+  const isCurrentTargetActive = targetPath.replace(/\/+$/, '') === currentActiveWorkspace.replace(/\/+$/, '')
+
   return (
     <div className="explorer-backdrop" onClick={onClose}>
       <div className="explorer-modal" onClick={(e) => e.stopPropagation()}>
         <div className="explorer-header">
           <div className="explorer-title">
             <span className="explorer-icon">🗂️</span>
-            <span>Remote NVMe & Workspace Explorer</span>
+            <span>Workspace & File Explorer</span>
           </div>
-          <div className="row">
+          <div className="row" style={{ gap: 8 }}>
             <select
               value={currentTarget}
               onChange={(e) => {
                 const next = e.target.value as ExecutionTarget
                 onSwitchTarget(next)
-                setTargetPath(defaultPathFor(next))
+                setTargetPath(defaultPathFor(next, activeWorkspaceDir))
               }}
               style={{ fontSize: 11, padding: '4px 8px' }}
             >
-              <option value="local_mac">Target: Local Mac (/tmp/spark-sandboxes)</option>
-              <option value="dgx_spark">Target: GX10 (/mnt/nvme/ocr_pipeline/workspaces)</option>
+              <option value="local_mac">Target: Local Mac</option>
+              <option value="dgx_spark">Target: Remote GX10 Spark</option>
             </select>
             <button type="button" className="btn-sm ghost" onClick={onClose}>
               ✕
@@ -248,6 +246,51 @@ export const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = ({
           </div>
         </div>
 
+        {/* Workspace Quick Switcher Bar */}
+        <div className="explorer-workspace-bar">
+          <div className="explorer-workspace-left">
+            <span className="explorer-ws-label">ACTIVE WORKSPACE:</span>
+            <span className="explorer-ws-badge" title={currentActiveWorkspace}>
+              {currentActiveWorkspace}
+            </span>
+          </div>
+          <div className="explorer-workspace-actions">
+            {!isCurrentTargetActive ? (
+              <button
+                type="button"
+                className="btn-sm btn-ablit"
+                onClick={() => handleSetActiveWorkspace(targetPath)}
+                title="Make current directory the active workspace for terminal & agent"
+              >
+                ★ Set as Active Workspace
+              </button>
+            ) : (
+              <span className="explorer-ws-active-chip">✓ Active Workspace</span>
+            )}
+          </div>
+        </div>
+
+        {/* Workspace Quick Presets */}
+        <div className="explorer-presets-strip">
+          <span className="explorer-presets-label">Presets:</span>
+          {WORKSPACE_PRESETS.map((p) => (
+            <button
+              key={p.path}
+              type="button"
+              className={`explorer-preset-chip ${targetPath.startsWith(p.path) ? 'active' : ''}`}
+              onClick={() => handleSelectPreset(p)}
+              title={`Switch to ${p.path} (${p.target})`}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Notice & Error Banners */}
+        {notice && <div className="explorer-notice-banner">{notice}</div>}
+        {error && <div className="explorer-error-banner">{error}</div>}
+
+        {/* Navigation Toolbar */}
         <div className="explorer-nav-bar">
           <button
             type="button"
@@ -260,10 +303,10 @@ export const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = ({
           <button
             type="button"
             className="btn-sm ghost"
-            onClick={() => setTargetPath(workspaceRoot)}
-            title={`Jump to workspace root (${workspaceRoot})`}
+            onClick={() => setTargetPath(currentActiveWorkspace)}
+            title={`Jump to active workspace (${currentActiveWorkspace})`}
           >
-            🏠 Root
+            🏠 Active
           </button>
           <input
             className="explorer-path-input"
@@ -274,6 +317,8 @@ export const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = ({
                 void loadDirectory(targetPath, currentTarget)
               }
             }}
+            placeholder="/path/to/workspace"
+            title="Type or edit directory path, then press Enter to navigate"
           />
           <button
             type="button"
@@ -281,7 +326,7 @@ export const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = ({
             onClick={() => void loadDirectory(targetPath, currentTarget)}
             disabled={loading}
           >
-            🔄 Refresh
+            🔄 Go / Refresh
           </button>
           <button
             type="button"
@@ -290,7 +335,7 @@ export const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = ({
               setCreatingFolder((v) => !v)
               setError(null)
             }}
-            title="Create a new folder in the current workspace path"
+            title="Create a new folder in the current directory"
             disabled={loading || creating}
           >
             📁+ New Folder
@@ -298,13 +343,14 @@ export const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = ({
         </div>
 
         {creatingFolder && (
-          <div className="explorer-create-row">
+          <div className="explorer-new-folder-bar">
+            <span style={{ fontSize: 11, color: 'var(--dracula-comment)' }}>Folder name:</span>
             <input
-              className="explorer-path-input"
               autoFocus
-              placeholder="New folder name"
+              className="explorer-folder-name-input"
               value={newFolderName}
               onChange={(e) => setNewFolderName(e.target.value)}
+              placeholder="e.g. project_alpha"
               onKeyDown={(e) => {
                 if (e.key === 'Enter') void createFolder()
                 if (e.key === 'Escape') {
@@ -316,8 +362,8 @@ export const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = ({
             />
             <button
               type="button"
-              className="btn-sm btn-ablit"
-              onClick={() => void createFolder()}
+              className="btn-sm primary"
+              onClick={createFolder}
               disabled={creating || !newFolderName.trim()}
             >
               {creating ? 'Creating…' : 'Create'}
@@ -336,76 +382,53 @@ export const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = ({
           </div>
         )}
 
-        {error && <div className="error" style={{ padding: '8px 16px' }}>{error}</div>}
-
-        <div className="explorer-body">
-          <div className="explorer-file-pane">
+        {/* Content Pane: File Browser & File Preview */}
+        <div className="explorer-content">
+          <div className="explorer-file-list">
             {loading ? (
-              <div className="explorer-loading">==&gt; Reading directory contents…</div>
+              <div className="explorer-loading">Loading directory contents…</div>
             ) : files.length === 0 ? (
-              <div className="explorer-empty">Empty directory or unreadable.</div>
+              <div className="explorer-empty">Empty directory</div>
             ) : (
-              files.map((file) => {
-                const isSelected = selectedFile === file.name
-                const icon = file.isDir
-                  ? '📁'
-                  : file.name.endsWith('.py')
-                  ? '🐍'
-                  : file.name.endsWith('.duckdb')
-                  ? '🦆'
-                  : file.name.endsWith('.log')
-                  ? '📜'
-                  : file.name.endsWith('.csv')
-                  ? '📊'
-                  : file.name.endsWith('.json') || file.name.endsWith('.jsonl')
-                  ? '📦'
-                  : '📄'
-
-                return (
-                  <div
-                    key={file.name}
-                    className={`explorer-row ${isSelected ? 'selected' : ''}`}
-                    onClick={() => {
-                      if (file.isDir) {
-                        navigateDir(file.name)
-                      } else {
-                        void previewFile(file.name)
-                      }
-                    }}
-                  >
-                    <span className="file-icon">{icon}</span>
-                    <span className="file-name">{file.name}</span>
-                    <span className="file-size">{file.size}</span>
-                  </div>
-                )
-              })
+              files.map((file) => (
+                <div
+                  key={file.name}
+                  className={`explorer-file-item ${file.name === selectedFile ? 'selected' : ''}`}
+                  onClick={() => {
+                    if (file.isDir) {
+                      navigateDir(file.name)
+                    } else {
+                      void previewFile(file.name)
+                    }
+                  }}
+                  title={file.isDir ? `Open folder: ${file.name}` : `Preview file: ${file.name}`}
+                >
+                  <span className="file-icon">{file.isDir ? '📁' : '📄'}</span>
+                  <span className="file-name">{file.name}</span>
+                  <span className="file-size">{file.isDir ? 'dir' : file.size}</span>
+                </div>
+              ))
             )}
           </div>
 
           <div className="explorer-preview-pane">
-            {selectedFile ? (
-              <>
-                <div className="preview-header">
-                  <span>📄 {selectedFile}</span>
-                  <button
-                    type="button"
-                    className="btn-sm ghost"
-                    onClick={() => void previewFile(selectedFile)}
-                  >
-                    Refresh
-                  </button>
-                </div>
-                {contentLoading ? (
-                  <div className="explorer-loading">Loading preview…</div>
-                ) : (
-                  <pre className="preview-content">{fileContent}</pre>
-                )}
-              </>
-            ) : (
-              <div className="preview-placeholder">
-                Select a file to inspect up to 250 lines.
-              </div>
-            )}
+            <div className="explorer-preview-header">
+              <span>{selectedFile ? selectedFile : 'File Preview'}</span>
+              {selectedFile && (
+                <span style={{ fontSize: 10, color: 'var(--dracula-comment)' }}>
+                  (First 250 lines)
+                </span>
+              )}
+            </div>
+            <div className="explorer-preview-body">
+              {contentLoading ? (
+                <div className="explorer-loading">Reading file…</div>
+              ) : fileContent ? (
+                <pre>{fileContent}</pre>
+              ) : (
+                <div className="explorer-empty">Select a file to inspect its content</div>
+              )}
+            </div>
           </div>
         </div>
       </div>

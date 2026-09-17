@@ -1844,6 +1844,125 @@ button.btn-sm {
   font-family: var(--font-mono);
 }
 
+/* Workspace Explorer Directory Switcher & Presets */
+.explorer-workspace-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 16px;
+  background: rgba(18, 20, 28, 0.95);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.explorer-workspace-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.explorer-ws-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--dracula-comment);
+  font-family: var(--font-mono);
+}
+
+.explorer-ws-badge {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--dracula-cyan);
+  background: rgba(139, 233, 253, 0.1);
+  border: 1px solid rgba(139, 233, 253, 0.25);
+  padding: 2px 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 380px;
+}
+
+.explorer-workspace-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.explorer-ws-active-chip {
+  font-size: 10.5px;
+  font-family: var(--font-mono);
+  color: var(--dracula-green);
+  background: rgba(80, 250, 123, 0.12);
+  border: 1px solid rgba(80, 250, 123, 0.25);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.explorer-presets-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 16px;
+  background: rgba(15, 17, 24, 0.95);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  overflow-x: auto;
+}
+
+.explorer-presets-label {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--dracula-comment);
+  flex-shrink: 0;
+}
+
+.explorer-preset-chip {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #cfd3dc;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  padding: 2px 7px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.explorer-preset-chip:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.explorer-preset-chip.active {
+  background: rgba(189, 147, 249, 0.2);
+  color: var(--dracula-purple);
+  border-color: rgba(189, 147, 249, 0.45);
+  font-weight: 600;
+}
+
+.explorer-notice-banner {
+  padding: 5px 16px;
+  background: rgba(80, 250, 123, 0.12);
+  color: var(--dracula-green);
+  border-bottom: 1px solid rgba(80, 250, 123, 0.25);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
+.explorer-error-banner {
+  padding: 5px 16px;
+  background: rgba(255, 85, 85, 0.12);
+  color: var(--dracula-red);
+  border-bottom: 1px solid rgba(255, 85, 85, 0.25);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
 .explorer-nav-bar {
   display: flex;
   align-items: center;
