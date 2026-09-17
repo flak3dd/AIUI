@@ -1,4 +1,5 @@
 import type { ProviderConfig } from './providers'
+import { resolveThinkingKwargs, classifyStreamDelta } from './thinkingOptions'
 
 export type ChatMessage = {
   role: 'system' | 'user' | 'assistant' | 'tool'
@@ -95,6 +96,8 @@ export async function fetchModels(provider: ProviderConfig): Promise<ModelInfo[]
 
 export type StreamHandlers = {
   onToken: (text: string) => void
+  /** Native model thinking / reasoning_content chunks (not part of the answer). */
+  onReasoning?: (text: string) => void
   onToolCalls?: (calls: ToolCall[]) => void
   onDone?: () => void
   /** Fired when the provider rejected native tools and we retried without them. */
@@ -119,13 +122,12 @@ export class GatedModelError extends Error {
 function buildStreamBody(
   body: Record<string, unknown>,
   provider: ProviderConfig,
+  enableThinking = false,
 ): Record<string, unknown> {
   const reqBody: Record<string, unknown> = { ...body, stream: true }
-  if (provider.id === 'abliteration') {
-    delete reqBody.chat_template_kwargs
-  } else {
-    reqBody.chat_template_kwargs = { enable_thinking: false }
-  }
+  const kwargs = resolveThinkingKwargs(provider.id, enableThinking)
+  if (kwargs) reqBody.chat_template_kwargs = kwargs
+  else delete reqBody.chat_template_kwargs
   return reqBody
 }
 
@@ -135,14 +137,15 @@ export async function streamChat(
   body: Record<string, unknown>,
   handlers: StreamHandlers,
   signal?: AbortSignal,
-): Promise<{ content: string; tool_calls: ToolCall[]; finishReason: string | null; toolsStripped?: boolean }> {
+  opts?: { enableThinking?: boolean },
+): Promise<{ content: string; reasoning: string; tool_calls: ToolCall[]; finishReason: string | null; toolsStripped?: boolean }> {
   const res = await fetch(`${provider.baseUrl}/chat/completions`, {
     method: 'POST',
     headers: authHeaders(provider, {
       'Content-Type': 'application/json',
       Accept: 'text/event-stream',
     }),
-    body: JSON.stringify(buildStreamBody(body, provider)),
+    body: JSON.stringify(buildStreamBody(body, provider, opts?.enableThinking === true)),
     signal,
   })
 
@@ -172,7 +175,7 @@ export async function streamChat(
       const fallbackBody = { ...body }
       delete fallbackBody.tools
       delete fallbackBody.tool_choice
-      const fallback = await streamChat(provider, fallbackBody, handlers, signal)
+      const fallback = await streamChat(provider, fallbackBody, handlers, signal, opts)
       return { ...fallback, toolsStripped: true }
     }
 
@@ -187,6 +190,7 @@ export async function streamChat(
   const decoder = new TextDecoder()
   let buffer = ''
   let content = ''
+  let reasoning = ''
   let finishReason: string | null = null
   const toolAcc = new Map<number, ToolCall>()
 
@@ -211,13 +215,13 @@ export async function streamChat(
           finishReason = choice.finish_reason
         }
         const delta = choice?.delta || {}
-        if (typeof delta.content === 'string' && delta.content) {
-          content += delta.content
-          handlers.onToken(delta.content)
-        } else if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) {
-          // Thinking models may stream only reasoning_content
-          content += delta.reasoning_content
-          handlers.onToken(delta.reasoning_content)
+        const classified = classifyStreamDelta(delta)
+        if (classified.kind === 'content') {
+          content += classified.text
+          handlers.onToken(classified.text)
+        } else if (classified.kind === 'reasoning') {
+          reasoning += classified.text
+          handlers.onReasoning?.(classified.text)
         }
         if (Array.isArray(delta.tool_calls)) {
           for (const tc of delta.tool_calls) {
@@ -242,5 +246,5 @@ export async function streamChat(
   const tool_calls = [...toolAcc.values()].filter((t) => t.function.name)
   if (tool_calls.length) handlers.onToolCalls?.(tool_calls)
   handlers.onDone?.()
-  return { content, tool_calls, finishReason }
+  return { content, reasoning, tool_calls, finishReason }
 }
