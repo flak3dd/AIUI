@@ -1,0 +1,22 @@
+{
+  "short_name": "Abliterated",
+  "name": "Abliterated Studio",
+  "icons": [
+    {
+      "src": "/icons/icon-lightning.png",
+      "type": "image/png",
+      "sizes": "192x192 512x512",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#09090B",
+  "theme_color": "#09090B",
+  "display": "standalone",
+  "orientation": "portrait"
+}

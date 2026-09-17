@@ -1,0 +1,514 @@
+{
+  "generic": {
+    "id": "generic",
+    "name": "Generic project",
+    "description": "Core infrastructure skeleton: configs, Docker, CI, Makefile, setup script, and build knowledge README",
+    "files": {
+      ".gitignore": "# Dependencies\nnode_modules/\n.venv/\nvenv/\n__pycache__/\n*.pyc\n\n# Environment\n.env\n.env.local\n.env.*.local\n\n# Build output\ndist/\nbuild/\nout/\ntarget/\n.next/\nbin/\n\n# Logs\n*.log\nlogs/\n\n# Editor\n.vscode/\n.idea/\n.DS_Store\n\n# Test / coverage\ncoverage/\n.nyc_output/\nhtmlcov/\n.pytest_cache/\n.mypy_cache/\n.ruff_cache/\n\n# Docker / runtime\ndocker-data/\n*.db\n*.sqlite\n",
+      ".editorconfig": "root = true\n\n[*]\ncharset = utf-8\nend_of_line = lf\ninsert_final_newline = true\ntrim_trailing_whitespace = true\n\n[*.{js,jsx,ts,tsx,json,yaml,yml,md}]\nindent_style = space\nindent_size = 2\n\n[*.{py}]\nindent_style = space\nindent_size = 4\n\n[Makefile]\nindent_style = tab\n\n[*.md]\ntrim_trailing_whitespace = false\n",
+      ".env.example": "# App\nNODE_ENV=development\nPORT=3000\nLOG_LEVEL=info\n\n# Database\nDATABASE_URL=postgres://user:password@localhost:5432/app\nREDIS_URL=redis://localhost:6379\n\n# Auth\nJWT_SECRET=replace-me\nJWT_EXPIRES_IN=1h\n\n# External APIs\nSTRIPE_SECRET_KEY=\nOPENAI_API_KEY=\n\n# Feature Flags\nENABLE_BETA_FEATURES=false\n",
+      "Makefile": ".PHONY: install dev build test lint typecheck docker-build docker-run clean\n\ninstall:\n\tnpm ci\n\ndev:\n\tnpm run dev\n\nbuild:\n\tnpm run build\n\ntest:\n\tnpm test\n\nlint:\n\tnpm run lint\n\ntypecheck:\n\tnpm run typecheck\n\ndocker-build:\n\tdocker build -t app .\n\ndocker-run:\n\tdocker run --rm -p 3000:3000 app\n\nclean:\n\trm -rf dist .next node_modules\n",
+      "docker-compose.yml": "services:\n  app:\n    build: .\n    ports:\n      - \"3000:3000\"\n    env_file:\n      - .env\n    depends_on:\n      - postgres\n      - redis\n\n  postgres:\n    image: postgres:16-alpine\n    environment:\n      POSTGRES_USER: postgres\n      POSTGRES_PASSWORD: postgres\n      POSTGRES_DB: app\n    ports:\n      - \"5432:5432\"\n    volumes:\n      - postgres-data:/var/lib/postgresql/data\n\n  redis:\n    image: redis:7-alpine\n    ports:\n      - \"6379:6379\"\n\nvolumes:\n  postgres-data:\n",
+      "Dockerfile": "FROM node:20-alpine AS base\n\nWORKDIR /app\n\nCOPY package*.json ./\n\nRUN npm ci\n\nCOPY . .\n\nRUN npm run build\n\nFROM node:20-alpine AS runtime\n\nWORKDIR /app\n\nENV NODE_ENV=production\n\nCOPY package*.json ./\n\nRUN npm ci --omit=dev\n\nCOPY --from=base /app/dist ./dist\n\nEXPOSE 3000\n\nCMD [\"node\", \"dist/server.js\"]\n",
+      "package.json": "{\n  \"name\": \"{{PROJECT_NAME}}\",\n  \"version\": \"0.1.0\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"dev\": \"tsx watch src/index.ts\",\n    \"build\": \"tsc\",\n    \"start\": \"node dist/index.js\",\n    \"lint\": \"eslint src --ext .ts\",\n    \"typecheck\": \"tsc --noEmit\",\n    \"test\": \"vitest run\"\n  }\n}\n",
+      "scripts/setup.sh": "#!/usr/bin/env bash\nset -euo pipefail\ncp -n .env.example .env || true\nnpm ci\necho \"Setup complete\"\n",
+      ".github/workflows/ci.yml": "name: CI\n\non:\n  push:\n    branches:\n      - main\n  pull_request:\n\njobs:\n  test:\n    runs-on: ubuntu-latest\n\n    steps:\n      - name: Checkout\n        uses: actions/checkout@v4\n\n      - name: Setup Node.js\n        uses: actions/setup-node@v4\n        with:\n          node-version: \"20\"\n          cache: \"npm\"\n\n      - name: Install dependencies\n        run: npm ci\n\n      - name: Lint\n        run: npm run lint\n\n      - name: Typecheck\n        run: npm run typecheck\n\n      - name: Test\n        run: npm test\n\n      - name: Build\n        run: npm run build\n",
+      "README.md": "# {{PROJECT_NAME}}\n\nInfrastructure-grade repository with automated build, test, containerization, and CI pipelines.\n\n## Build Knowledge & System Architecture\n\n```text\nHost System / Developer Machine\n  ├── 1. Setup & Config:       scripts/setup.sh  ->  .env.example -> .env\n  ├── 2. Verification & Build: Makefile          ->  Lint, Typecheck, Test, Build\n  ├── 3. Container Runtime:    Dockerfile        ->  Multi-stage production image\n  ├── 4. Service Topology:     docker-compose.yml->  App + Database + Cache\n  └── 5. Continuous Delivery:  .github/workflows ->  Automated CI pipeline\n```\n\n## Quick Start & Verification Sequence\n\nExecute the verified bootstrap sequence:\n\n```bash\n# 1. Bootstrap environment and lock dependencies\nbash scripts/setup.sh\n\n# 2. Run automated test suite\nmake test\n\n# 3. Compile production artifacts\nmake build\n\n# 4. Launch containerized infrastructure\ndocker-compose up --build -d\n```\n\n## Infrastructure & Build Knowledge Reference\n\n| Component | File Path | Build Purpose | Key Commands |\n|---|---|---|---|\n| **Environment Setup** | `scripts/setup.sh` | Idempotent environment initialization & dependencies | `bash scripts/setup.sh` |\n| **Task Automation** | `Makefile` | Standardized build & test orchestration targets | `make test`, `make build` |\n| **Container Engine** | `Dockerfile` | Multi-stage lightweight production container | `docker build -t app .` |\n| **Service Composition** | `docker-compose.yml` | Local multi-container development environment | `docker-compose up -d` |\n| **CI/CD Pipeline** | `.github/workflows/ci.yml` | Continuous integration verification on push/PR | Automated GitHub Actions |\n| **Environment Config** | `.env.example` | Baseline configuration & required secrets contract | `cp .env.example .env` |\n| **Editor Standards** | `.editorconfig` | Cross-editor line endings, indentation, and formatting | Auto-enforced |\n| **VCS Exclusion** | `.gitignore` | Prevents credential leaks and artifact clutter | Auto-enforced |\n\n## Environment Variables Contract\n\n| Variable | Required | Default | Description |\n|---|---:|---|---|\n| `NODE_ENV` | No | `development` | Runtime environment tier (`development`, `test`, `production`) |\n| `PORT` | No | `3000` | Application HTTP listener port |\n| `DATABASE_URL` | Yes | - | Primary database connection URI |\n| `REDIS_URL` | No | `redis://localhost:6379` | Cache and pub/sub message broker |\n| `JWT_SECRET` | Yes | - | Cryptographic token signing secret |\n\n## Operational Runbook & Troubleshooting\n\n| Incident / Symptom | Root Cause | Resolution |\n|---|---|---||\n| `Port 3000 in use` | Conflicting background process | Run `lsof -ti:3000 | xargs kill -9` or override `PORT=3001` |\n| `Database refused` | Postgres container not yet healthy | Run `docker-compose up -d postgres` and verify `DATABASE_URL` |\n| `Missing environment` | Missing `.env` file | Run `bash scripts/setup.sh` or `cp .env.example .env` |\n| `Build failed` | Transpilation or lint error | Run `npm run lint` and `npm run typecheck` for trace |\n"
+    }
+  },
+  "node-api": {
+    "id": "node-api",
+    "name": "TypeScript Node API",
+    "description": "Express + Zod + Vitest API scaffold with health module",
+    "files": {
+      "package.json": "{\n  \"name\": \"{{PROJECT_NAME}}\",\n  \"version\": \"0.1.0\",\n  \"private\": true,\n  \"type\": \"module\",\n  \"scripts\": {\n    \"dev\": \"tsx watch src/server.ts\",\n    \"build\": \"tsc\",\n    \"start\": \"node dist/server.js\",\n    \"lint\": \"eslint src --ext .ts\",\n    \"typecheck\": \"tsc --noEmit\",\n    \"test\": \"vitest run\",\n    \"test:watch\": \"vitest\"\n  },\n  \"dependencies\": {\n    \"dotenv\": \"^16.4.5\",\n    \"express\": \"^4.19.2\",\n    \"helmet\": \"^7.1.0\",\n    \"cors\": \"^2.8.5\",\n    \"zod\": \"^3.23.8\"\n  },\n  \"devDependencies\": {\n    \"@types/cors\": \"^2.8.17\",\n    \"@types/express\": \"^4.17.21\",\n    \"@types/node\": \"^20.12.12\",\n    \"eslint\": \"^9.4.0\",\n    \"tsx\": \"^4.11.0\",\n    \"typescript\": \"^5.4.5\",\n    \"vitest\": \"^1.6.0\"\n  }\n}\n",
+      "tsconfig.json": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2022\",\n    \"module\": \"NodeNext\",\n    \"moduleResolution\": \"NodeNext\",\n    \"strict\": true,\n    \"esModuleInterop\": true,\n    \"skipLibCheck\": true,\n    \"forceConsistentCasingInFileNames\": true,\n    \"outDir\": \"dist\",\n    \"rootDir\": \"src\",\n    \"resolveJsonModule\": true,\n    \"declaration\": true,\n    \"sourceMap\": true,\n    \"noUncheckedIndexedAccess\": true,\n    \"exactOptionalPropertyTypes\": true\n  },\n  \"include\": [\"src/**/*.ts\"],\n  \"exclude\": [\"node_modules\", \"dist\"]\n}\n",
+      "vitest.config.ts": "import { defineConfig } from \"vitest/config\";\n\nexport default defineConfig({\n  test: {\n    environment: \"node\",\n    globals: true,\n    include: [\"tests/**/*.test.ts\"],\n  },\n});\n",
+      "src/config/env.ts": "import \"dotenv/config\";\nimport { z } from \"zod\";\n\nconst envSchema = z.object({\n  NODE_ENV: z.enum([\"development\", \"test\", \"production\"]).default(\"development\"),\n  PORT: z.coerce.number().default(3000),\n  LOG_LEVEL: z.string().default(\"info\"),\n  DATABASE_URL: z.string().optional(),\n  JWT_SECRET: z.string().optional(),\n});\n\nconst env = envSchema.parse(process.env);\n\nexport const config = {\n  env: env.NODE_ENV,\n  port: env.PORT,\n  logLevel: env.LOG_LEVEL,\n  databaseUrl: env.DATABASE_URL,\n  jwtSecret: env.JWT_SECRET,\n};\n\nexport type Config = typeof config;\n",
+      "src/app.ts": "import express from \"express\";\nimport helmet from \"helmet\";\nimport cors from \"cors\";\nimport { errorHandler } from \"./middleware/errorHandler.js\";\nimport { requestLogger } from \"./middleware/requestLogger.js\";\nimport { healthRoutes } from \"./modules/health/health.routes.js\";\n\nexport function createApp() {\n  const app = express();\n\n  app.use(helmet());\n  app.use(cors());\n  app.use(express.json());\n  app.use(requestLogger);\n\n  app.use(\"/health\", healthRoutes);\n\n  app.use(errorHandler);\n\n  return app;\n}\n",
+      "src/server.ts": "import { createApp } from \"./app.js\";\nimport { config } from \"./config/env.js\";\n\nconst app = createApp();\n\napp.listen(config.port, () => {\n  console.log(`Server running on port ${config.port}`);\n});\n",
+      "src/middleware/errorHandler.ts": "import type { NextFunction, Request, Response } from \"express\";\n\nexport class AppError extends Error {\n  constructor(\n    public statusCode: number,\n    message: string,\n  ) {\n    super(message);\n    this.name = \"AppError\";\n  }\n}\n\nexport function errorHandler(\n  err: unknown,\n  _req: Request,\n  res: Response,\n  _next: NextFunction,\n) {\n  if (err instanceof AppError) {\n    return res.status(err.statusCode).json({\n      error: err.message,\n    });\n  }\n\n  console.error(err);\n\n  return res.status(500).json({\n    error: \"Internal server error\",\n  });\n}\n",
+      "src/middleware/requestLogger.ts": "import type { NextFunction, Request, Response } from \"express\";\n\nexport function requestLogger(req: Request, res: Response, next: NextFunction) {\n  const start = Date.now();\n\n  res.on(\"finish\", () => {\n    const duration = Date.now() - start;\n    console.log(`${req.method} ${req.originalUrl} ${res.statusCode} ${duration}ms`);\n  });\n\n  next();\n}\n",
+      "src/middleware/auth.ts": "import type { NextFunction, Request, Response } from \"express\";\n\nexport function auth(_req: Request, _res: Response, next: NextFunction) {\n  next();\n}\n",
+      "src/modules/health/health.controller.ts": "import type { Request, Response } from \"express\";\n\nexport function healthHandler(_req: Request, res: Response) {\n  res.json({\n    status: \"ok\",\n    timestamp: new Date().toISOString(),\n  });\n}\n",
+      "src/modules/health/health.routes.ts": "import { Router } from \"express\";\nimport { healthHandler } from \"./health.controller.js\";\n\nexport const healthRoutes = Router();\n\nhealthRoutes.get(\"/\", healthHandler);\n",
+      "src/utils/logger.ts": "export const logger = { info: console.log, error: console.error };\n",
+      "src/types/index.ts": "export type Id = string;\n",
+      ".gitignore": "# Dependencies\nnode_modules/\n.venv/\nvenv/\n__pycache__/\n*.pyc\n\n# Environment\n.env\n.env.local\n.env.*.local\n\n# Build output\ndist/\nbuild/\nout/\ntarget/\n.next/\nbin/\n\n# Logs\n*.log\nlogs/\n\n# Editor\n.vscode/\n.idea/\n.DS_Store\n\n# Test / coverage\ncoverage/\n.nyc_output/\nhtmlcov/\n.pytest_cache/\n.mypy_cache/\n.ruff_cache/\n\n# Docker / runtime\ndocker-data/\n*.db\n*.sqlite\n",
+      ".editorconfig": "root = true\n\n[*]\ncharset = utf-8\nend_of_line = lf\ninsert_final_newline = true\ntrim_trailing_whitespace = true\n\n[*.{js,jsx,ts,tsx,json,yaml,yml,md}]\nindent_style = space\nindent_size = 2\n\n[*.{py}]\nindent_style = space\nindent_size = 4\n\n[Makefile]\nindent_style = tab\n\n[*.md]\ntrim_trailing_whitespace = false\n",
+      ".env.example": "# App\nNODE_ENV=development\nPORT=3000\nLOG_LEVEL=info\n\n# Database\nDATABASE_URL=postgres://user:password@localhost:5432/app\nREDIS_URL=redis://localhost:6379\n\n# Auth\nJWT_SECRET=replace-me\nJWT_EXPIRES_IN=1h\n\n# External APIs\nSTRIPE_SECRET_KEY=\nOPENAI_API_KEY=\n\n# Feature Flags\nENABLE_BETA_FEATURES=false\n",
+      "README.md": "# {{PROJECT_NAME}}\n\nTypeScript Node API scaffold.\n\n```bash\ncp .env.example .env\nnpm install\nnpm run dev\n```\n",
+      "Dockerfile": "FROM node:20-alpine AS base\n\nWORKDIR /app\n\nCOPY package*.json ./\n\nRUN npm ci\n\nCOPY . .\n\nRUN npm run build\n\nFROM node:20-alpine AS runtime\n\nWORKDIR /app\n\nENV NODE_ENV=production\n\nCOPY package*.json ./\n\nRUN npm ci --omit=dev\n\nCOPY --from=base /app/dist ./dist\n\nEXPOSE 3000\n\nCMD [\"node\", \"dist/server.js\"]\n"
+    }
+  },
+  "express-users": {
+    "id": "express-users",
+    "name": "Express users module",
+    "description": "Users routes/controller/service — apply on top of node-api",
+    "files": {
+      "src/modules/users/users.routes.ts": "import { Router } from \"express\";\nimport { listUsers, createUser } from \"./users.controller.js\";\n\nexport const usersRoutes = Router();\n\nusersRoutes.get(\"/\", listUsers);\nusersRoutes.post(\"/\", createUser);\n",
+      "src/modules/users/users.controller.ts": "import type { Request, Response } from \"express\";\nimport { userService } from \"./users.service.js\";\n\nexport async function listUsers(_req: Request, res: Response) {\n  const users = await userService.list();\n  res.json(users);\n}\n\nexport async function createUser(req: Request, res: Response) {\n  const user = await userService.create(req.body);\n  res.status(201).json(user);\n}\n",
+      "src/modules/users/users.service.ts": "import { AppError } from \"../../middleware/errorHandler.js\";\n\ntype UserInput = {\n  name: string;\n  email: string;\n};\n\nexport const userService = {\n  async list() {\n    return [\n      { id: \"1\", name: \"Alice\", email: \"alice@example.com\" },\n    ];\n  },\n\n  async create(input: UserInput) {\n    if (!input.name) {\n      throw new AppError(400, \"name is required\");\n    }\n\n    return {\n      id: crypto.randomUUID(),\n      name: input.name,\n      email: input.email,\n    };\n  },\n};\n"
+    }
+  },
+  "next-app": {
+    "id": "next-app",
+    "name": "Next.js app",
+    "description": "Next App Router scaffold with health API route",
+    "files": {
+      "package.json": "{\n  \"name\": \"{{PROJECT_NAME}}\",\n  \"version\": \"0.1.0\",\n  \"private\": true,\n  \"scripts\": {\n    \"dev\": \"next dev\",\n    \"build\": \"next build\",\n    \"start\": \"next start\",\n    \"lint\": \"next lint\",\n    \"typecheck\": \"tsc --noEmit\",\n    \"test\": \"vitest run\"\n  },\n  \"dependencies\": {\n    \"next\": \"^14.2.3\",\n    \"react\": \"^18.3.1\",\n    \"react-dom\": \"^18.3.1\",\n    \"zod\": \"^3.23.8\"\n  },\n  \"devDependencies\": {\n    \"@types/node\": \"^20.12.12\",\n    \"@types/react\": \"^18.3.2\",\n    \"@types/react-dom\": \"^18.3.0\",\n    \"eslint\": \"^9.4.0\",\n    \"eslint-config-next\": \"^14.2.3\",\n    \"typescript\": \"^5.4.5\",\n    \"vitest\": \"^1.6.0\"\n  }\n}\n",
+      "next.config.mjs": "/** @type {import('next').NextConfig} */\nconst nextConfig = {\n  reactStrictMode: true,\n};\n\nexport default nextConfig;\n",
+      "tsconfig.json": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2017\",\n    \"lib\": [\"dom\", \"dom.iterable\", \"esnext\"],\n    \"allowJs\": true,\n    \"skipLibCheck\": true,\n    \"strict\": true,\n    \"noEmit\": true,\n    \"esModuleInterop\": true,\n    \"module\": \"esnext\",\n    \"moduleResolution\": \"bundler\",\n    \"resolveJsonModule\": true,\n    \"isolatedModules\": true,\n    \"jsx\": \"preserve\",\n    \"incremental\": true,\n    \"plugins\": [{ \"name\": \"next\" }],\n    \"paths\": { \"@/*\": [\"./src/*\"] }\n  },\n  \"include\": [\"next-env.d.ts\", \"**/*.ts\", \"**/*.tsx\", \".next/types/**/*.ts\"],\n  \"exclude\": [\"node_modules\"]\n}\n",
+      "src/app/layout.tsx": "import type { Metadata } from \"next\";\nimport \"./globals.css\";\n\nexport const metadata: Metadata = {\n  title: \"{{PROJECT_NAME}}\",\n  description: \"Next.js application scaffold\",\n};\n\nexport default function RootLayout({\n  children,\n}: {\n  children: React.ReactNode;\n}) {\n  return (\n    <html lang=\"en\">\n      <body>{children}</body>\n    </html>\n  );\n}\n",
+      "src/app/page.tsx": "export default function Home() {\n  return (\n    <main style={{ padding: 24 }}>\n      <h1>{{PROJECT_NAME}}</h1>\n      <p>Starter template ready.</p>\n    </main>\n  );\n}\n",
+      "src/app/globals.css": "body { margin: 0; font-family: system-ui, sans-serif; }\n",
+      "src/app/api/health/route.ts": "import { NextResponse } from \"next/server\";\n\nexport async function GET() {\n  return NextResponse.json({\n    status: \"ok\",\n    timestamp: new Date().toISOString(),\n  });\n}\n",
+      "src/lib/utils.ts": "export function cn(...classes: Array<string | false | null | undefined>) {\n  return classes.filter(Boolean).join(\" \");\n}\n",
+      ".gitignore": "# Dependencies\nnode_modules/\n.venv/\nvenv/\n__pycache__/\n*.pyc\n\n# Environment\n.env\n.env.local\n.env.*.local\n\n# Build output\ndist/\nbuild/\nout/\ntarget/\n.next/\nbin/\n\n# Logs\n*.log\nlogs/\n\n# Editor\n.vscode/\n.idea/\n.DS_Store\n\n# Test / coverage\ncoverage/\n.nyc_output/\nhtmlcov/\n.pytest_cache/\n.mypy_cache/\n.ruff_cache/\n\n# Docker / runtime\ndocker-data/\n*.db\n*.sqlite\n",
+      ".editorconfig": "root = true\n\n[*]\ncharset = utf-8\nend_of_line = lf\ninsert_final_newline = true\ntrim_trailing_whitespace = true\n\n[*.{js,jsx,ts,tsx,json,yaml,yml,md}]\nindent_style = space\nindent_size = 2\n\n[*.{py}]\nindent_style = space\nindent_size = 4\n\n[Makefile]\nindent_style = tab\n\n[*.md]\ntrim_trailing_whitespace = false\n",
+      ".env.example": "# App\nNODE_ENV=development\nPORT=3000\nLOG_LEVEL=info\n\n# Database\nDATABASE_URL=postgres://user:password@localhost:5432/app\nREDIS_URL=redis://localhost:6379\n\n# Auth\nJWT_SECRET=replace-me\nJWT_EXPIRES_IN=1h\n\n# External APIs\nSTRIPE_SECRET_KEY=\nOPENAI_API_KEY=\n\n# Feature Flags\nENABLE_BETA_FEATURES=false\n",
+      "README.md": "# {{PROJECT_NAME}}\n\nNext.js scaffold.\n\n```bash\nnpm install\nnpm run dev\n```\n"
+    }
+  },
+  "react-component": {
+    "id": "react-component",
+    "name": "React Card component",
+    "description": "Simple Card TSX component with optional action",
+    "files": {
+      "src/components/Card.tsx": "type Props = {\n  title: string;\n  description?: string;\n  onClick?: () => void;\n};\n\nexport function Card({ title, description, onClick }: Props) {\n  return (\n    <div\n      style={{\n        border: \"1px solid #e5e7eb\",\n        borderRadius: 8,\n        padding: 16,\n        maxWidth: 420,\n      }}\n    >\n      <h2 style={{ marginTop: 0 }}>{title}</h2>\n\n      {description ? (\n        <p style={{ color: \"#6b7280\" }}>{description}</p>\n      ) : null}\n\n      {onClick ? (\n        <button\n          type=\"button\"\n          onClick={onClick}\n          style={{\n            marginTop: 12,\n            padding: \"8px 12px\",\n            borderRadius: 6,\n            border: \"1px solid #d1d5db\",\n            cursor: \"pointer\",\n          }}\n        >\n          Action\n        </button>\n      ) : null}\n    </div>\n  );\n}\n"
+    }
+  },
+  "react-hook": {
+    "id": "react-hook",
+    "name": "useAsyncData hook",
+    "description": "React hook for async data loading with refresh",
+    "files": {
+      "src/hooks/useAsyncData.ts": "import { useCallback, useEffect, useState } from \"react\";\n\ntype State<T> = {\n  data: T | null;\n  loading: boolean;\n  error: Error | null;\n};\n\nexport function useAsyncData<T>(\n  fn: () => Promise<T>,\n  deps: unknown[] = [],\n) {\n  const [state, setState] = useState<State<T>>({\n    data: null,\n    loading: true,\n    error: null,\n  });\n\n  const execute = useCallback(async () => {\n    setState((prev) => ({ ...prev, loading: true, error: null }));\n\n    try {\n      const data = await fn();\n      setState({ data, loading: false, error: null });\n    } catch (error) {\n      setState({\n        data: null,\n        loading: false,\n        error: error instanceof Error ? error : new Error(String(error)),\n      });\n    }\n    // eslint-disable-next-line react-hooks/exhaustive-deps\n  }, deps);\n\n  useEffect(() => {\n    void execute();\n  }, [execute]);\n\n  return {\n    ...state,\n    refresh: execute,\n  };\n}\n"
+    }
+  },
+  "api-client": {
+    "id": "api-client",
+    "name": "TypeScript API client",
+    "description": "Fetch-based ApiClient with get/post/put/patch/delete",
+    "files": {
+      "src/lib/api-client.ts": "type RequestOptions = RequestInit & {\n  params?: Record<string, string | number | boolean | undefined>;\n};\n\nexport class ApiClient {\n  constructor(\n    private baseUrl: string,\n    private defaultHeaders: Record<string, string> = {},\n  ) {}\n\n  private buildUrl(path: string, params?: RequestOptions[\"params\"]) {\n    const url = new URL(path, this.baseUrl);\n\n    if (params) {\n      for (const [key, value] of Object.entries(params)) {\n        if (value !== undefined) {\n          url.searchParams.set(key, String(value));\n        }\n      }\n    }\n\n    return url.toString();\n  }\n\n  async request<T>(path: string, options: RequestOptions = {}): Promise<T> {\n    const { params, headers, ...rest } = options;\n\n    const response = await fetch(this.buildUrl(path, params), {\n      ...rest,\n      headers: {\n        \"Content-Type\": \"application/json\",\n        ...this.defaultHeaders,\n        ...headers,\n      },\n    });\n\n    if (!response.ok) {\n      const text = await response.text();\n      throw new Error(`API error ${response.status}: ${text}`);\n    }\n\n    return response.json() as Promise<T>;\n  }\n\n  get<T>(path: string, options?: RequestOptions) {\n    return this.request<T>(path, { ...options, method: \"GET\" });\n  }\n\n  post<T>(path: string, body: unknown, options?: RequestOptions) {\n    return this.request<T>(path, {\n      ...options,\n      method: \"POST\",\n      body: JSON.stringify(body),\n    });\n  }\n\n  put<T>(path: string, body: unknown, options?: RequestOptions) {\n    return this.request<T>(path, {\n      ...options,\n      method: \"PUT\",\n      body: JSON.stringify(body),\n    });\n  }\n\n  patch<T>(path: string, body: unknown, options?: RequestOptions) {\n    return this.request<T>(path, {\n      ...options,\n      method: \"PATCH\",\n      body: JSON.stringify(body),\n    });\n  }\n\n  delete<T>(path: string, options?: RequestOptions) {\n    return this.request<T>(path, { ...options, method: \"DELETE\" });\n  }\n}\n"
+    }
+  },
+  "fastapi": {
+    "id": "fastapi",
+    "name": "Python FastAPI app",
+    "description": "FastAPI layered app with health/users + pytest",
+    "files": {
+      "pyproject.toml": "[project]\nname = \"{{PROJECT_NAME}}\"\nversion = \"0.1.0\"\nrequires-python = \">=3.11\"\n\ndependencies = [\n  \"fastapi>=0.111.0\",\n  \"uvicorn[standard]>=0.30.0\",\n  \"pydantic>=2.7.0\",\n  \"pydantic-settings>=2.3.0\",\n  \"email-validator>=2.1.0\",\n  \"httpx>=0.27.0\",\n]\n\n[project.optional-dependencies]\ndev = [\n  \"pytest>=8.2.0\",\n  \"pytest-asyncio>=0.23.7\",\n  \"ruff>=0.4.8\",\n]\n\n[tool.ruff]\nline-length = 100\n\n[tool.pytest.ini_options]\nasyncio_mode = \"auto\"\ntestpaths = [\"tests\"]\n",
+      "app/core/config.py": "from pydantic_settings import BaseSettings, SettingsConfigDict\n\n\nclass Settings(BaseSettings):\n    app_name: str = \"{{PROJECT_NAME}}\"\n    environment: str = \"development\"\n    debug: bool = False\n\n    database_url: str | None = None\n    jwt_secret: str | None = None\n\n    model_config = SettingsConfigDict(env_file=\".env\")\n\n\nsettings = Settings()\n",
+      "app/core/security.py": "def create_access_token(subject: str) -> str:\n    # Placeholder — replace with real JWT signing.\n    return f\"token:{subject}\"\n",
+      "app/api/deps.py": "# Shared FastAPI dependencies live here.\n",
+      "app/main.py": "from fastapi import FastAPI\nfrom fastapi.middleware.cors import CORSMiddleware\n\nfrom app.api.routes import health, users\nfrom app.core.config import settings\n\napp = FastAPI(title=settings.app_name)\n\napp.add_middleware(\n    CORSMiddleware,\n    allow_origins=[\"*\"],\n    allow_credentials=True,\n    allow_methods=[\"*\"],\n    allow_headers=[\"*\"],\n)\n\napp.include_router(health.router, tags=[\"health\"])\napp.include_router(users.router, prefix=\"/users\", tags=[\"users\"])\n\n\n@app.get(\"/\")\ndef root():\n    return {\"status\": \"ok\", \"service\": settings.app_name}\n",
+      "app/api/routes/__init__.py": "",
+      "app/api/routes/health.py": "from datetime import datetime, timezone\n\nfrom fastapi import APIRouter\n\nrouter = APIRouter()\n\n\n@router.get(\"/health\")\ndef health_check():\n    return {\n        \"status\": \"ok\",\n        \"timestamp\": datetime.now(timezone.utc).isoformat(),\n    }\n",
+      "app/api/routes/users.py": "from fastapi import APIRouter\n\nfrom app.schemas.user import UserCreate, UserOut\nfrom app.services.user_service import user_service\n\nrouter = APIRouter()\n\n\n@router.get(\"\", response_model=list[UserOut])\ndef list_users():\n    return user_service.list()\n\n\n@router.post(\"\", response_model=UserOut, status_code=201)\ndef create_user(payload: UserCreate):\n    return user_service.create(payload)\n",
+      "app/schemas/user.py": "from pydantic import BaseModel, EmailStr\n\n\nclass UserBase(BaseModel):\n    name: str\n    email: EmailStr\n\n\nclass UserCreate(UserBase):\n    pass\n\n\nclass UserOut(UserBase):\n    id: str\n",
+      "app/services/user_service.py": "import uuid\n\nfrom app.repositories.user_repository import user_repository\nfrom app.schemas.user import UserCreate, UserOut\n\n\nclass UserService:\n    def list(self) -> list[UserOut]:\n        return user_repository.list()\n\n    def create(self, payload: UserCreate) -> UserOut:\n        return user_repository.create(\n            id=str(uuid.uuid4()),\n            name=payload.name,\n            email=payload.email,\n        )\n\n\nuser_service = UserService()\n",
+      "app/repositories/user_repository.py": "from app.schemas.user import UserOut\n\n\nclass UserRepository:\n    def __init__(self) -> None:\n        self._users: list[UserOut] = [\n            UserOut(\n                id=\"1\",\n                name=\"Alice\",\n                email=\"alice@example.com\",\n            )\n        ]\n\n    def list(self) -> list[UserOut]:\n        return self._users\n\n    def create(self, id: str, name: str, email: str) -> UserOut:\n        user = UserOut(id=id, name=name, email=email)\n        self._users.append(user)\n        return user\n\n\nuser_repository = UserRepository()\n",
+      "app/models/user.py": "# ORM models placeholder\n",
+      "app/db/session.py": "# Database session placeholder\n",
+      "app/__init__.py": "",
+      "app/api/__init__.py": "",
+      "app/core/__init__.py": "",
+      "app/schemas/__init__.py": "",
+      "app/services/__init__.py": "",
+      "app/repositories/__init__.py": "",
+      "app/models/__init__.py": "",
+      "app/db/__init__.py": "",
+      "tests/conftest.py": "# pytest fixtures\n",
+      "tests/test_health.py": "from fastapi.testclient import TestClient\n\nfrom app.main import app\n\nclient = TestClient(app)\n\n\ndef test_health():\n    response = client.get(\"/health\")\n    assert response.status_code == 200\n    assert response.json()[\"status\"] == \"ok\"\n",
+      ".gitignore": "# Dependencies\nnode_modules/\n.venv/\nvenv/\n__pycache__/\n*.pyc\n\n# Environment\n.env\n.env.local\n.env.*.local\n\n# Build output\ndist/\nbuild/\nout/\ntarget/\n.next/\nbin/\n\n# Logs\n*.log\nlogs/\n\n# Editor\n.vscode/\n.idea/\n.DS_Store\n\n# Test / coverage\ncoverage/\n.nyc_output/\nhtmlcov/\n.pytest_cache/\n.mypy_cache/\n.ruff_cache/\n\n# Docker / runtime\ndocker-data/\n*.db\n*.sqlite\n",
+      ".env.example": "# App\nNODE_ENV=development\nPORT=3000\nLOG_LEVEL=info\n\n# Database\nDATABASE_URL=postgres://user:password@localhost:5432/app\nREDIS_URL=redis://localhost:6379\n\n# Auth\nJWT_SECRET=replace-me\nJWT_EXPIRES_IN=1h\n\n# External APIs\nSTRIPE_SECRET_KEY=\nOPENAI_API_KEY=\n\n# Feature Flags\nENABLE_BETA_FEATURES=false\n",
+      "README.md": "# {{PROJECT_NAME}}\n\nFastAPI scaffold.\n\n```bash\npip install -e \".[dev]\"\nuvicorn app.main:app --reload\n```\n",
+      "Dockerfile": "FROM python:3.12-slim AS base\n\nENV PYTHONDONTWRITEBYTECODE=1\nENV PYTHONUNBUFFERED=1\n\nWORKDIR /app\n\nCOPY pyproject.toml ./\n\nRUN pip install --no-cache-dir -e .\n\nCOPY . .\n\nEXPOSE 8000\n\nCMD [\"uvicorn\", \"app.main:app\", \"--host\", \"0.0.0.0\", \"--port\", \"8000\"]\n",
+      "Makefile": ".PHONY: install dev test lint format typecheck clean\n\ninstall:\n\tpip install -e \".[dev]\"\n\ndev:\n\tuvicorn app.main:app --reload\n\ntest:\n\tpytest\n\nlint:\n\truff check app tests\n\nformat:\n\truff format app tests\n\ntypecheck:\n\tmypy app\n\nclean:\n\trm -rf .pytest_cache .mypy_cache .ruff_cache dist\n"
+    }
+  },
+  "go-api": {
+    "id": "go-api",
+    "name": "Go HTTP API",
+    "description": "net/http Go API with health + logger middleware",
+    "files": {
+      "go.mod": "module example.com/{{PROJECT_NAME}}\n\ngo 1.22\n",
+      "cmd/server/main.go": "package main\n\nimport (\n\t\"log\"\n\t\"net/http\"\n\n\t\"example.com/{{PROJECT_NAME}}/internal/config\"\n\t\"example.com/{{PROJECT_NAME}}/internal/server\"\n)\n\nfunc main() {\n\tcfg := config.Load()\n\n\thandler := server.New(cfg)\n\n\tlog.Printf(\"server listening on :%s\", cfg.Port)\n\n\tif err := http.ListenAndServe(\":\"+cfg.Port, handler); err != nil {\n\t\tlog.Fatal(err)\n\t}\n}\n",
+      "internal/config/config.go": "package config\n\nimport \"os\"\n\ntype Config struct {\n\tPort    string\n\tEnv     string\n\tLogging bool\n}\n\nfunc Load() Config {\n\treturn Config{\n\t\tPort:    getenv(\"PORT\", \"8080\"),\n\t\tEnv:     getenv(\"ENV\", \"development\"),\n\t\tLogging: getenv(\"LOGGING\", \"true\") == \"true\",\n\t}\n}\n\nfunc getenv(key, fallback string) string {\n\tvalue, ok := os.LookupEnv(key)\n\tif !ok || value == \"\" {\n\t\treturn fallback\n\t}\n\treturn value\n}\n",
+      "internal/middleware/logger.go": "package middleware\n\nimport (\n\t\"log\"\n\t\"net/http\"\n\t\"time\"\n)\n\nfunc Logger(next http.Handler) http.Handler {\n\treturn http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {\n\t\tstart := time.Now()\n\n\t\tnext.ServeHTTP(w, r)\n\n\t\tlog.Printf(\n\t\t\t\"%s %s %s\",\n\t\t\tr.Method,\n\t\t\tr.URL.Path,\n\t\t\ttime.Since(start),\n\t\t)\n\t})\n}\n",
+      "internal/handlers/health.go": "package handlers\n\nimport (\n\t\"encoding/json\"\n\t\"net/http\"\n\t\"time\"\n)\n\nfunc Health() http.Handler {\n\treturn http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {\n\t\tw.Header().Set(\"Content-Type\", \"application/json\")\n\n\t\t_ = json.NewEncoder(w).Encode(map[string]any{\n\t\t\t\"status\":    \"ok\",\n\t\t\t\"timestamp\": time.Now().UTC().Format(time.RFC3339),\n\t\t})\n\t})\n}\n",
+      "internal/server/server.go": "package server\n\nimport (\n\t\"net/http\"\n\n\t\"example.com/{{PROJECT_NAME}}/internal/config\"\n\t\"example.com/{{PROJECT_NAME}}/internal/handlers\"\n\t\"example.com/{{PROJECT_NAME}}/internal/middleware\"\n)\n\nfunc New(cfg config.Config) http.Handler {\n\tmux := http.NewServeMux()\n\n\tmux.Handle(\"GET /health\", handlers.Health())\n\tmux.Handle(\"GET /\", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {\n\t\tw.Header().Set(\"Content-Type\", \"application/json\")\n\t\tw.Write([]byte(`{\"status\":\"ok\",\"service\":\"go-api\"}`))\n\t}))\n\n\treturn middleware.Logger(mux)\n}\n",
+      "Dockerfile": "FROM golang:1.22-alpine AS build\n\nWORKDIR /app\n\nCOPY go.mod go.sum ./\n\nRUN go mod download\n\nCOPY . .\n\nRUN CGO_ENABLED=0 GOOS=linux go build -o /server ./cmd/server\n\nFROM alpine:3.20\n\nWORKDIR /app\n\nCOPY --from=build /server /server\n\nEXPOSE 8080\n\nCMD [\"/server\"]\n",
+      "Makefile": ".PHONY: install run build test lint fmt vet clean\n\ninstall:\n\tgo mod tidy\n\nrun:\n\tgo run ./cmd/server\n\nbuild:\n\tgo build -o bin/server ./cmd/server\n\ntest:\n\tgo test ./...\n\nlint:\n\tgolangci-lint run\n\nfmt:\n\tgo fmt ./...\n\nvet:\n\tgo vet ./...\n\nclean:\n\trm -rf bin\n",
+      ".gitignore": "# Dependencies\nnode_modules/\n.venv/\nvenv/\n__pycache__/\n*.pyc\n\n# Environment\n.env\n.env.local\n.env.*.local\n\n# Build output\ndist/\nbuild/\nout/\ntarget/\n.next/\nbin/\n\n# Logs\n*.log\nlogs/\n\n# Editor\n.vscode/\n.idea/\n.DS_Store\n\n# Test / coverage\ncoverage/\n.nyc_output/\nhtmlcov/\n.pytest_cache/\n.mypy_cache/\n.ruff_cache/\n\n# Docker / runtime\ndocker-data/\n*.db\n*.sqlite\n",
+      "README.md": "# {{PROJECT_NAME}}\n\nGo HTTP API.\n\n```bash\ngo run ./cmd/server\n```\n"
+    }
+  },
+  "docker-node": {
+    "id": "docker-node",
+    "name": "Node Dockerfile",
+    "description": "Multi-stage Node.js production Dockerfile",
+    "files": {
+      "Dockerfile": "FROM node:20-alpine AS base\n\nWORKDIR /app\n\nCOPY package*.json ./\n\nRUN npm ci\n\nCOPY . .\n\nRUN npm run build\n\nFROM node:20-alpine AS runtime\n\nWORKDIR /app\n\nENV NODE_ENV=production\n\nCOPY package*.json ./\n\nRUN npm ci --omit=dev\n\nCOPY --from=base /app/dist ./dist\n\nEXPOSE 3000\n\nCMD [\"node\", \"dist/server.js\"]\n"
+    }
+  },
+  "docker-python": {
+    "id": "docker-python",
+    "name": "Python Dockerfile",
+    "description": "Python FastAPI Dockerfile",
+    "files": {
+      "Dockerfile": "FROM python:3.12-slim AS base\n\nENV PYTHONDONTWRITEBYTECODE=1\nENV PYTHONUNBUFFERED=1\n\nWORKDIR /app\n\nCOPY pyproject.toml ./\n\nRUN pip install --no-cache-dir -e .\n\nCOPY . .\n\nEXPOSE 8000\n\nCMD [\"uvicorn\", \"app.main:app\", \"--host\", \"0.0.0.0\", \"--port\", \"8000\"]\n"
+    }
+  },
+  "docker-go": {
+    "id": "docker-go",
+    "name": "Go Dockerfile",
+    "description": "Multi-stage Go Dockerfile",
+    "files": {
+      "Dockerfile": "FROM golang:1.22-alpine AS build\n\nWORKDIR /app\n\nCOPY go.mod go.sum ./\n\nRUN go mod download\n\nCOPY . .\n\nRUN CGO_ENABLED=0 GOOS=linux go build -o /server ./cmd/server\n\nFROM alpine:3.20\n\nWORKDIR /app\n\nCOPY --from=build /server /server\n\nEXPOSE 8080\n\nCMD [\"/server\"]\n"
+    }
+  },
+  "docker-compose": {
+    "id": "docker-compose",
+    "name": "docker-compose stack",
+    "description": "App + Postgres + Redis compose file",
+    "files": {
+      "docker-compose.yml": "services:\n  app:\n    build: .\n    ports:\n      - \"3000:3000\"\n    env_file:\n      - .env\n    depends_on:\n      - postgres\n      - redis\n\n  postgres:\n    image: postgres:16-alpine\n    environment:\n      POSTGRES_USER: postgres\n      POSTGRES_PASSWORD: postgres\n      POSTGRES_DB: app\n    ports:\n      - \"5432:5432\"\n    volumes:\n      - postgres-data:/var/lib/postgresql/data\n\n  redis:\n    image: redis:7-alpine\n    ports:\n      - \"6379:6379\"\n\nvolumes:\n  postgres-data:\n"
+    }
+  },
+  "github-ci": {
+    "id": "github-ci",
+    "name": "GitHub Actions CI",
+    "description": "Node lint/typecheck/test/build workflow",
+    "files": {
+      ".github/workflows/ci.yml": "name: CI\n\non:\n  push:\n    branches:\n      - main\n  pull_request:\n\njobs:\n  test:\n    runs-on: ubuntu-latest\n\n    steps:\n      - name: Checkout\n        uses: actions/checkout@v4\n\n      - name: Setup Node.js\n        uses: actions/setup-node@v4\n        with:\n          node-version: \"20\"\n          cache: \"npm\"\n\n      - name: Install dependencies\n        run: npm ci\n\n      - name: Lint\n        run: npm run lint\n\n      - name: Typecheck\n        run: npm run typecheck\n\n      - name: Test\n        run: npm test\n\n      - name: Build\n        run: npm run build\n"
+    }
+  },
+  "github-docker-build": {
+    "id": "github-docker-build",
+    "name": "GitHub Actions Docker build",
+    "description": "Buildx image build without push",
+    "files": {
+      ".github/workflows/docker-build.yml": "name: Docker Build\n\non:\n  push:\n    branches:\n      - main\n\njobs:\n  build:\n    runs-on: ubuntu-latest\n\n    steps:\n      - name: Checkout\n        uses: actions/checkout@v4\n\n      - name: Set up Docker Buildx\n        uses: docker/setup-buildx-action@v3\n\n      - name: Build image\n        uses: docker/build-push-action@v5\n        with:\n          context: .\n          push: false\n          tags: app:latest\n          cache-from: type=gha\n          cache-to: type=gha,mode=max\n"
+    }
+  },
+  "github-deploy": {
+    "id": "github-deploy",
+    "name": "GitHub Actions deploy stub",
+    "description": "Deploy workflow stub for Vercel/Fly/etc",
+    "files": {
+      ".github/workflows/deploy.yml": "name: Deploy\n\non:\n  push:\n    branches:\n      - main\n\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n\n    steps:\n      - name: Checkout\n        uses: actions/checkout@v4\n\n      - name: Deploy\n        run: |\n          echo \"Deploying application...\"\n          # Replace with your deploy command:\n          # - Vercel\n          # - Fly.io\n          # - Railway\n          # - AWS ECS\n          # - Kubernetes\n"
+    }
+  },
+  "makefile-node": {
+    "id": "makefile-node",
+    "name": "Makefile (Node)",
+    "description": "Node install/dev/test/docker targets",
+    "files": {
+      "Makefile": ".PHONY: install dev build test lint typecheck docker-build docker-run clean\n\ninstall:\n\tnpm ci\n\ndev:\n\tnpm run dev\n\nbuild:\n\tnpm run build\n\ntest:\n\tnpm test\n\nlint:\n\tnpm run lint\n\ntypecheck:\n\tnpm run typecheck\n\ndocker-build:\n\tdocker build -t app .\n\ndocker-run:\n\tdocker run --rm -p 3000:3000 app\n\nclean:\n\trm -rf dist .next node_modules\n"
+    }
+  },
+  "makefile-python": {
+    "id": "makefile-python",
+    "name": "Makefile (Python)",
+    "description": "Python uvicorn/pytest/ruff targets",
+    "files": {
+      "Makefile": ".PHONY: install dev test lint format typecheck clean\n\ninstall:\n\tpip install -e \".[dev]\"\n\ndev:\n\tuvicorn app.main:app --reload\n\ntest:\n\tpytest\n\nlint:\n\truff check app tests\n\nformat:\n\truff format app tests\n\ntypecheck:\n\tmypy app\n\nclean:\n\trm -rf .pytest_cache .mypy_cache .ruff_cache dist\n"
+    }
+  },
+  "makefile-go": {
+    "id": "makefile-go",
+    "name": "Makefile (Go)",
+    "description": "Go run/build/test/lint targets",
+    "files": {
+      "Makefile": ".PHONY: install run build test lint fmt vet clean\n\ninstall:\n\tgo mod tidy\n\nrun:\n\tgo run ./cmd/server\n\nbuild:\n\tgo build -o bin/server ./cmd/server\n\ntest:\n\tgo test ./...\n\nlint:\n\tgolangci-lint run\n\nfmt:\n\tgo fmt ./...\n\nvet:\n\tgo vet ./...\n\nclean:\n\trm -rf bin\n"
+    }
+  },
+  "github-pr-template": {
+    "id": "github-pr-template",
+    "name": "PR template",
+    "description": "Pull request checklist template",
+    "files": {
+      ".github/pull_request_template.md": "## Summary\n\nWhat does this PR do?\n\n## Type of Change\n\n- [ ] Bug fix\n- [ ] Feature\n- [ ] Refactor\n- [ ] Documentation\n- [ ] Infrastructure\n- [ ] Performance improvement\n\n## Testing\n\nHow was this tested?\n\n- [ ] Unit tests\n- [ ] Integration tests\n- [ ] Manual testing\n\n## Checklist\n\n- [ ] Code follows project style guidelines\n- [ ] Tests added or updated\n- [ ] Documentation updated\n- [ ] No breaking changes\n- [ ] Security implications considered\n\n## Screenshots\n\nIf UI changes, include screenshots.\n\n## Deployment Notes\n\nAny migrations, env vars, or rollout steps?\n"
+    }
+  },
+  "github-issue-templates": {
+    "id": "github-issue-templates",
+    "name": "Issue templates",
+    "description": "Bug report and feature request issue forms",
+    "files": {
+      ".github/ISSUE_TEMPLATE/bug_report.md": "---\nname: Bug report\nabout: Create a bug report\ntitle: \"\"\nlabels: bug\nassignees: \"\"\n---\n\n## Describe the bug\n\nA clear and concise description of the bug.\n\n## Steps to reproduce\n\n1. Go to '...'\n2. Click on '...'\n3. See error\n\n## Expected behavior\n\nWhat you expected to happen.\n\n## Actual behavior\n\nWhat happened instead.\n\n## Environment\n\n- OS:\n- Browser:\n- Node version:\n- App version:\n\n## Logs\n\nPaste relevant logs or stack traces.\n\n## Additional context\n\nAnything else useful.\n",
+      ".github/ISSUE_TEMPLATE/feature_request.md": "---\nname: Feature request\nabout: Suggest an idea\ntitle: \"\"\nlabels: enhancement\nassignees: \"\"\n---\n\n## Problem\n\nWhat problem does this feature solve?\n\n## Proposed solution\n\nDescribe the desired behavior.\n\n## Alternatives considered\n\nOther solutions considered.\n\n## Impact\n\nWho benefits from this?\n\n## Additional context\n\nAny other context.\n"
+    }
+  },
+  "adr-bootstrap": {
+    "id": "adr-bootstrap",
+    "name": "ADR bootstrap",
+    "description": "First ADR + reusable ADR template",
+    "files": {
+      "docs/adr/0001-record-architecture-decisions.md": "# 1. Record architecture decisions\n\nDate: YYYY-MM-DD\n\n## Status\n\nAccepted\n\n## Context\n\nWe need to record architectural decisions because they have long-term effects on maintenance, scalability, security, and team velocity.\n\n## Decision\n\nWe will use Architecture Decision Records, stored in `docs/adr/`.\n\n## Consequences\n\n- Positive: decisions become discoverable and reviewable.\n- Negative: requires discipline to keep ADRs updated.\n- Risk: outdated ADRs may mislead future contributors.\n",
+      "docs/adr/ADR-TEMPLATE.md": "# Title\n\nDate: YYYY-MM-DD\n\n## Status\n\nProposed | Accepted | Deprecated | Superseded\n\n## Context\n\nWhat problem are we solving? What constraints matter?\n\n## Decision\n\nWhat did we decide?\n\n## Alternatives Considered\n\n1. Option A\n   - Pros\n   - Cons\n2. Option B\n   - Pros\n   - Cons\n\n## Consequences\n\n### Positive\n\n- ...\n\n### Negative\n\n- ...\n\n### Risks\n\n- ...\n\n## Follow-ups\n\n- [ ] ...\n"
+    }
+  },
+  "api-design-doc": {
+    "id": "api-design-doc",
+    "name": "API design doc",
+    "description": "Markdown API design worksheet",
+    "files": {
+      "docs/api-design.md": "## Feature\n\nName:\nOwner:\nStatus: Draft\n\n## Problem\n\nWhat user/business problem does this solve?\n\n## Resources\n\n| Resource | Meaning |\n|---|---|\n| `users` | User accounts |\n| `projects` | Workspaces |\n\n## Endpoints\n\n### GET /users\n\nReturns a list of users.\n\nQuery params:\n\n| Param | Type | Description |\n|---|---|---|\n| `limit` | number | Max results |\n| `offset` | number | Pagination offset |\n\nResponse:\n\n```json\n{\n  \"data\": [],\n  \"meta\": {\n    \"limit\": 20,\n    \"offset\": 0,\n    \"total\": 100\n  }\n}\n```\n\n### POST /users\n\nCreates a user.\n\nRequest:\n\n```json\n{\n  \"name\": \"Alice\",\n  \"email\": \"alice@example.com\"\n}\n```\n\nResponse:\n\n```json\n{\n  \"data\": {\n    \"id\": \"uuid\",\n    \"name\": \"Alice\",\n    \"email\": \"alice@example.com\",\n    \"createdAt\": \"2025-01-01T00:00:00Z\"\n  }\n}\n```\n\n## Error Format\n\n```json\n{\n  \"error\": {\n    \"code\": \"VALIDATION_ERROR\",\n    \"message\": \"email is required\",\n    \"details\": []\n  }\n}\n```\n\n## Auth\n\n- Method:\n- Scopes:\n- Authorization rules:\n\n## Rate Limiting\n\n- Limit:\n- Window:\n- Response header:\n\n## Versioning\n\n- Method:\n- Deprecation policy:\n\n## Testing Plan\n\n- Unit tests\n- Integration tests\n- Contract tests\n\n## Rollout\n\n- Feature flag:\n- Migration:\n- Backward compatibility:\n"
+    }
+  },
+  "openapi": {
+    "id": "openapi",
+    "name": "OpenAPI spec",
+    "description": "openapi.yaml with health + users",
+    "files": {
+      "openapi.yaml": "openapi: 3.1.0\ninfo:\n  title: {{PROJECT_NAME}} API\n  version: 1.0.0\n\nservers:\n  - url: http://localhost:3000\n\npaths:\n  /health:\n    get:\n      summary: Health check\n      responses:\n        \"200\":\n          description: OK\n          content:\n            application/json:\n              schema:\n                type: object\n                properties:\n                  status:\n                    type: string\n                  timestamp:\n                    type: string\n\n  /users:\n    get:\n      summary: List users\n      parameters:\n        - in: query\n          name: limit\n          schema:\n            type: integer\n        - in: query\n          name: offset\n          schema:\n            type: integer\n      responses:\n        \"200\":\n          description: OK\n          content:\n            application/json:\n              schema:\n                type: object\n                properties:\n                  data:\n                    type: array\n                    items:\n                      $ref: \"#/components/schemas/User\"\n\n    post:\n      summary: Create user\n      requestBody:\n        required: true\n        content:\n          application/json:\n            schema:\n              $ref: \"#/components/schemas/CreateUser\"\n      responses:\n        \"201\":\n          description: Created\n          content:\n            application/json:\n              schema:\n                type: object\n                properties:\n                  data:\n                    $ref: \"#/components/schemas/User\"\n\ncomponents:\n  schemas:\n    User:\n      type: object\n      properties:\n        id:\n          type: string\n        name:\n          type: string\n        email:\n          type: string\n        createdAt:\n          type: string\n\n    CreateUser:\n      type: object\n      required:\n        - name\n        - email\n      properties:\n        name:\n          type: string\n        email:\n          type: string\n"
+    }
+  },
+  "graphql-schema": {
+    "id": "graphql-schema",
+    "name": "GraphQL schema",
+    "description": "schema.graphql with health + users",
+    "files": {
+      "schema.graphql": "type Query {\n  health: Health!\n  users(limit: Int, offset: Int): UserList!\n  user(id: ID!): User\n}\n\ntype Mutation {\n  createUser(input: CreateUserInput!): User!\n}\n\ntype Health {\n  status: String!\n  timestamp: String!\n}\n\ntype User {\n  id: ID!\n  name: String!\n  email: String!\n  createdAt: String!\n}\n\ntype UserList {\n  data: [User!]!\n  meta: PageMeta!\n}\n\ntype PageMeta {\n  limit: Int!\n  offset: Int!\n  total: Int!\n}\n\ninput CreateUserInput {\n  name: String!\n  email: String!\n}\n"
+    }
+  },
+  "graphql-resolvers": {
+    "id": "graphql-resolvers",
+    "name": "GraphQL resolvers",
+    "description": "TypeScript GraphQL resolvers stub",
+    "files": {
+      "src/graphql/resolvers.ts": "type Context = {\n  db: any;\n};\n\nexport const resolvers = {\n  Query: {\n    health: () => ({\n      status: \"ok\",\n      timestamp: new Date().toISOString(),\n    }),\n\n    users: async (_parent: unknown, args: any, ctx: Context) => {\n      const limit = args.limit ?? 20;\n      const offset = args.offset ?? 0;\n\n      const users = await ctx.db.users.list({ limit, offset });\n\n      return {\n        data: users,\n        meta: {\n          limit,\n          offset,\n          total: 100,\n        },\n      };\n    },\n\n    user: async (_parent: unknown, args: { id: string }, ctx: Context) => {\n      return ctx.db.users.findById(args.id);\n    },\n  },\n\n  Mutation: {\n    createUser: async (_parent: unknown, args: any, ctx: Context) => {\n      return ctx.db.users.create(args.input);\n    },\n  },\n};\n"
+    }
+  },
+  "sql-schema": {
+    "id": "sql-schema",
+    "name": "SQL schema",
+    "description": "users table + multi-tenant schema",
+    "files": {
+      "db/users.sql": "-- users.sql\n\nCREATE TABLE IF NOT EXISTS users (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  email TEXT NOT NULL UNIQUE,\n  name TEXT NOT NULL,\n  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),\n  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()\n);\n\nCREATE INDEX IF NOT EXISTS idx_users_created_at\nON users (created_at DESC);\n\nCREATE INDEX IF NOT EXISTS idx_users_email\nON users (email);\n",
+      "db/multi_tenant.sql": "CREATE TABLE tenants (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  slug TEXT NOT NULL UNIQUE,\n  name TEXT NOT NULL,\n  created_at TIMESTAMPTZ NOT NULL DEFAULT now()\n);\n\nCREATE TABLE users (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  tenant_id UUID NOT NULL REFERENCES tenants(id),\n  email TEXT NOT NULL,\n  name TEXT NOT NULL,\n  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),\n  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),\n  UNIQUE (tenant_id, email)\n);\n\nCREATE INDEX idx_users_tenant\nON users (tenant_id);\n"
+    }
+  },
+  "prisma-schema": {
+    "id": "prisma-schema",
+    "name": "Prisma schema",
+    "description": "User + Project Prisma models",
+    "files": {
+      "prisma/schema.prisma": "generator client {\n  provider = \"prisma-client-js\"\n}\n\ndatasource db {\n  provider = \"postgresql\"\n  url      = env(\"DATABASE_URL\")\n}\n\nmodel User {\n  id        String   @id @default(uuid())\n  email     String   @unique\n  name      String\n  createdAt DateTime @default(now())\n  updatedAt DateTime @updatedAt\n\n  projects Project[]\n\n  @@map(\"users\")\n}\n\nmodel Project {\n  id        String   @id @default(uuid())\n  name      String\n  createdAt DateTime @default(now())\n  updatedAt DateTime @updatedAt\n\n  ownerId String\n  owner   User     @relation(fields: [ownerId], references: [id])\n\n  @@map(\"projects\")\n}\n"
+    }
+  },
+  "sql-migration": {
+    "id": "sql-migration",
+    "name": "SQL migration",
+    "description": "0001_create_users migration",
+    "files": {
+      "migrations/0001_create_users.sql": "-- migrations/0001_create_users.sql\n\nBEGIN;\n\nCREATE TABLE users (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  email TEXT NOT NULL UNIQUE,\n  name TEXT NOT NULL,\n  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),\n  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()\n);\n\nCREATE INDEX idx_users_email ON users (email);\n\nCOMMIT;\n"
+    }
+  },
+  "auth-flow-doc": {
+    "id": "auth-flow-doc",
+    "name": "Auth flow doc",
+    "description": "JWT auth flow design notes",
+    "files": {
+      "docs/auth-flow.md": "## Auth Flow\n\n1. User submits credentials.\n2. Server validates credentials.\n3. Server issues access token.\n4. Client sends token in `Authorization: Bearer <token>`.\n5. Middleware verifies token.\n6. Route handler receives authenticated user.\n7. Authorization rules check permissions.\n\n## Token Strategy\n\n- Access token: short-lived\n- Refresh token: long-lived, stored securely\n- Revocation: allowlist/denylist or token versioning\n\n## Security Notes\n\n- Use HTTPS only\n- Store refresh tokens in HttpOnly cookies if web app\n- Avoid storing secrets in localStorage\n- Validate issuer, audience, expiration\n- Use strong signing secret\n"
+    }
+  },
+  "jwt-middleware": {
+    "id": "jwt-middleware",
+    "name": "JWT auth middleware",
+    "description": "Express requireAuth middleware stub",
+    "files": {
+      "src/middleware/requireAuth.ts": "import type { NextFunction, Request, Response } from \"express\";\n\ntype AuthUser = {\n  id: string;\n  role: string;\n};\n\ndeclare global {\n  namespace Express {\n    interface Request {\n      user?: AuthUser;\n    }\n  }\n}\n\nexport function requireAuth(req: Request, res: Response, next: NextFunction) {\n  const header = req.headers.authorization;\n\n  if (!header?.startsWith(\"Bearer \")) {\n    return res.status(401).json({ error: \"Missing bearer token\" });\n  }\n\n  const token = header.slice(7);\n\n  try {\n    // Replace with real verification\n    const user = verifyToken(token);\n    req.user = user;\n    next();\n  } catch {\n    return res.status(401).json({ error: \"Invalid token\" });\n  }\n}\n\nfunction verifyToken(_token: string): AuthUser {\n  // Example only. Use real JWT library in production.\n  return { id: \"1\", role: \"user\" };\n}\n"
+    }
+  },
+  "rbac": {
+    "id": "rbac",
+    "name": "RBAC helpers",
+    "description": "Role permissions + Express requirePermission middleware",
+    "files": {
+      "src/auth/rbac.ts": "type Role = \"admin\" | \"user\" | \"guest\";\n\nconst permissions: Record<Role, string[]> = {\n  admin: [\"*\"],\n  user: [\"resource:read\", \"resource:write:own\", \"profile:update\"],\n  guest: [\"resource:read\"],\n};\n\nexport function hasPermission(role: Role, permission: string): boolean {\n  const allowed = permissions[role] ?? [];\n  return allowed.includes(\"*\") || allowed.includes(permission);\n}\n\nexport function requirePermission(permission: string) {\n  return (req: Request, res: Response, next: NextFunction) => {\n    if (!req.user) {\n      return res.status(401).json({ error: \"Unauthenticated\" });\n    }\n\n    if (!hasPermission(req.user.role as Role, permission)) {\n      return res.status(403).json({ error: \"Forbidden\" });\n    }\n\n    next();\n  };\n}\n\nexport type { Role };\n"
+    }
+  },
+  "gitignore": {
+    "id": "gitignore",
+    "name": ".gitignore",
+    "description": "Standard polyglot gitignore",
+    "files": {
+      ".gitignore": "# Dependencies\nnode_modules/\n.venv/\nvenv/\n__pycache__/\n*.pyc\n\n# Environment\n.env\n.env.local\n.env.*.local\n\n# Build output\ndist/\nbuild/\nout/\ntarget/\n.next/\nbin/\n\n# Logs\n*.log\nlogs/\n\n# Editor\n.vscode/\n.idea/\n.DS_Store\n\n# Test / coverage\ncoverage/\n.nyc_output/\nhtmlcov/\n.pytest_cache/\n.mypy_cache/\n.ruff_cache/\n\n# Docker / runtime\ndocker-data/\n*.db\n*.sqlite\n"
+    }
+  },
+  "editorconfig": {
+    "id": "editorconfig",
+    "name": ".editorconfig",
+    "description": "EditorConfig template",
+    "files": {
+      ".editorconfig": "root = true\n\n[*]\ncharset = utf-8\nend_of_line = lf\ninsert_final_newline = true\ntrim_trailing_whitespace = true\n\n[*.{js,jsx,ts,tsx,json,yaml,yml,md}]\nindent_style = space\nindent_size = 2\n\n[*.{py}]\nindent_style = space\nindent_size = 4\n\n[Makefile]\nindent_style = tab\n\n[*.md]\ntrim_trailing_whitespace = false\n"
+    }
+  },
+  "env-example": {
+    "id": "env-example",
+    "name": ".env.example",
+    "description": "Environment variable example file",
+    "files": {
+      ".env.example": "# App\nNODE_ENV=development\nPORT=3000\nLOG_LEVEL=info\n\n# Database\nDATABASE_URL=postgres://user:password@localhost:5432/app\nREDIS_URL=redis://localhost:6379\n\n# Auth\nJWT_SECRET=replace-me\nJWT_EXPIRES_IN=1h\n\n# External APIs\nSTRIPE_SECRET_KEY=\nOPENAI_API_KEY=\n\n# Feature Flags\nENABLE_BETA_FEATURES=false\n"
+    }
+  },
+  "readme": {
+    "id": "readme",
+    "name": "README",
+    "description": "Project README template",
+    "files": {
+      "README.md": "# {{PROJECT_NAME}}\n\nShort description of the project.\n\n## Features\n\n- Feature 1\n- Feature 2\n- Feature 3\n\n## Tech Stack\n\n- Language:\n- Framework:\n- Database:\n- Testing:\n- Deployment:\n\n## Requirements\n\n- Node 20+ / Python 3.11+ / Go 1.22+ / etc.\n\n## Setup\n\n```bash\ncp .env.example .env\nnpm install\nnpm run dev\n```\n\n## Scripts\n\n| Script | Description |\n|---|---|\n| `npm run dev` | Start development server |\n| `npm run build` | Build production bundle |\n| `npm test` | Run tests |\n| `npm run lint` | Run linter |\n| `npm run typecheck` | Run type checking |\n\n## Environment Variables\n\n| Variable | Required | Description |\n|---|---:|---|\n| `PORT` | No | Server port |\n| `DATABASE_URL` | Yes | Database connection string |\n| `JWT_SECRET` | Yes | Token signing secret |\n\n## Architecture\n\n```text\nRequest\n  -> Route\n  -> Controller\n  -> Service\n  -> Repository\n  -> Database\n```\n\n## Testing\n\n```bash\nnpm test\nnpm run test:coverage\n```\n\n## Deployment\n\n```bash\ndocker build -t app .\ndocker run -p 3000:3000 app\n```\n\n## Troubleshooting\n\n| Problem | Fix |\n|---|---|\n| Port already in use | Change `PORT` |\n| Database connection failed | Check `DATABASE_URL` |\n| Missing env variable | Copy `.env.example` to `.env` |\n"
+    }
+  },
+  "structured-logger": {
+    "id": "structured-logger",
+    "name": "Structured JSON logger",
+    "description": "Node JSON logger with levels",
+    "files": {
+      "src/utils/logger.ts": "type LogLevel = \"debug\" | \"info\" | \"warn\" | \"error\";\n\nexport function log(level: LogLevel, message: string, meta: Record<string, unknown> = {}) {\n  const entry = {\n    level,\n    message,\n    timestamp: new Date().toISOString(),\n    ...meta,\n  };\n\n  const output = JSON.stringify(entry);\n\n  if (level === \"error\") {\n    console.error(output);\n  } else if (level === \"warn\") {\n    console.warn(output);\n  } else {\n    console.log(output);\n  }\n}\n\nexport const logger = {\n  debug: (msg: string, meta?: Record<string, unknown>) => log(\"debug\", msg, meta),\n  info: (msg: string, meta?: Record<string, unknown>) => log(\"info\", msg, meta),\n  warn: (msg: string, meta?: Record<string, unknown>) => log(\"warn\", msg, meta),\n  error: (msg: string, meta?: Record<string, unknown>) => log(\"error\", msg, meta),\n};\n"
+    }
+  },
+  "result-type": {
+    "id": "result-type",
+    "name": "Result type helpers",
+    "description": "Go-style Result ok/err helpers in TypeScript",
+    "files": {
+      "src/lib/result.ts": "type Result<T, E> =\n  | { ok: true; value: T }\n  | { ok: false; error: E };\n\nexport function ok<T>(value: T): Result<T, never> {\n  return { ok: true, value };\n}\n\nexport function err<E>(error: E): Result<never, E> {\n  return { ok: false, error };\n}\n\nexport function parseAge(input: string): Result<number, string> {\n  const n = Number(input);\n  if (Number.isNaN(n)) return err(\"not_a_number\");\n  if (n < 0) return err(\"negative_age\");\n  return ok(n);\n}\n\nexport type { Result };\n"
+    }
+  },
+  "zod-validation": {
+    "id": "zod-validation",
+    "name": "Zod validation",
+    "description": "createUserSchema + validate helper",
+    "files": {
+      "src/validation/user.ts": "import { z } from \"zod\";\n\nexport const createUserSchema = z.object({\n  name: z.string().min(1).max(100),\n  email: z.string().email(),\n  age: z.number().int().min(0).max(150).optional(),\n});\n\nexport type CreateUserInput = z.infer<typeof createUserSchema>;\n\nexport function validate<T>(schema: z.ZodSchema<T>, data: unknown): T {\n  return schema.parse(data);\n}\n"
+    }
+  },
+  "feature-flags": {
+    "id": "feature-flags",
+    "name": "Feature flags",
+    "description": "Env-backed feature flag helper",
+    "files": {
+      "src/config/featureFlags.ts": "type Flags = {\n  ENABLE_BETA_FEATURES: boolean;\n  NEW_CHECKOUT: boolean;\n  DARK_MODE: boolean;\n};\n\nconst flags: Flags = {\n  ENABLE_BETA_FEATURES: process.env.ENABLE_BETA_FEATURES === \"true\",\n  NEW_CHECKOUT: process.env.NEW_CHECKOUT === \"true\",\n  DARK_MODE: true,\n};\n\nexport function isFeatureEnabled(flag: keyof Flags): boolean {\n  return flags[flag] ?? false;\n}\n\nexport type { Flags };\n"
+    }
+  },
+  "memory-cache": {
+    "id": "memory-cache",
+    "name": "Memory cache TTL",
+    "description": "In-memory cache with TTL",
+    "files": {
+      "src/lib/memoryCache.ts": "type CacheEntry<T> = {\n  value: T;\n  expiresAt: number;\n};\n\nexport class MemoryCache {\n  private store = new Map<string, CacheEntry<unknown>>();\n\n  set<T>(key: string, value: T, ttlMs: number): void {\n    this.store.set(key, {\n      value,\n      expiresAt: Date.now() + ttlMs,\n    });\n  }\n\n  get<T>(key: string): T | null {\n    const entry = this.store.get(key) as CacheEntry<T> | undefined;\n\n    if (!entry) return null;\n\n    if (Date.now() > entry.expiresAt) {\n      this.store.delete(key);\n      return null;\n    }\n\n    return entry.value;\n  }\n\n  delete(key: string): void {\n    this.store.delete(key);\n  }\n\n  clear(): void {\n    this.store.clear();\n  }\n}\n"
+    }
+  },
+  "rate-limiter": {
+    "id": "rate-limiter",
+    "name": "Rate limiter",
+    "description": "In-memory rate limiter + Express middleware",
+    "files": {
+      "src/middleware/rateLimiter.ts": "import type { NextFunction, Request, Response } from \"express\";\n\ntype Bucket = {\n  count: number;\n  resetAt: number;\n};\n\nexport class RateLimiter {\n  private buckets = new Map<string, Bucket>();\n\n  constructor(\n    private limit: number,\n    private windowMs: number,\n  ) {}\n\n  allow(key: string): boolean {\n    const now = Date.now();\n    const bucket = this.buckets.get(key);\n\n    if (!bucket || now > bucket.resetAt) {\n      this.buckets.set(key, {\n        count: 1,\n        resetAt: now + this.windowMs,\n      });\n      return true;\n    }\n\n    if (bucket.count >= this.limit) {\n      return false;\n    }\n\n    bucket.count += 1;\n    return true;\n  }\n}\n\nexport function rateLimit(limiter: RateLimiter) {\n  return (req: Request, res: Response, next: NextFunction) => {\n    const key = req.ip ?? \"unknown\";\n\n    if (!limiter.allow(key)) {\n      return res.status(429).json({ error: \"Too many requests\" });\n    }\n\n    next();\n  };\n}\n"
+    }
+  },
+  "retry-backoff": {
+    "id": "retry-backoff",
+    "name": "Retry with backoff",
+    "description": "Exponential backoff retry helper",
+    "files": {
+      "src/lib/retry.ts": "export async function retry<T>(\n  fn: () => Promise<T>,\n  {\n    retries = 3,\n    delayMs = 100,\n    backoffFactor = 2,\n  }: { retries?: number; delayMs?: number; backoffFactor?: number } = {},\n): Promise<T> {\n  let lastError: unknown;\n\n  for (let attempt = 0; attempt <= retries; attempt++) {\n    try {\n      return await fn();\n    } catch (error) {\n      lastError = error;\n\n      if (attempt === retries) break;\n\n      const delay = delayMs * backoffFactor ** attempt;\n      await new Promise((resolve) => setTimeout(resolve, delay));\n    }\n  }\n\n  throw lastError;\n}\n"
+    }
+  },
+  "circuit-breaker": {
+    "id": "circuit-breaker",
+    "name": "Circuit breaker",
+    "description": "Closed/open/half-open circuit breaker",
+    "files": {
+      "src/lib/circuitBreaker.ts": "type State = \"closed\" | \"open\" | \"half-open\";\n\nexport class CircuitBreaker {\n  private state: State = \"closed\";\n  private failures = 0;\n  private lastFailureAt = 0;\n\n  constructor(\n    private failureThreshold: number,\n    private resetTimeoutMs: number,\n  ) {}\n\n  async call<T>(fn: () => Promise<T>): Promise<T> {\n    if (this.state === \"open\") {\n      if (Date.now() - this.lastFailureAt >= this.resetTimeoutMs) {\n        this.state = \"half-open\";\n      } else {\n        throw new Error(\"Circuit breaker is open\");\n      }\n    }\n\n    try {\n      const result = await fn();\n\n      if (this.state === \"half-open\") {\n        this.state = \"closed\";\n        this.failures = 0;\n      }\n\n      return result;\n    } catch (error) {\n      this.failures += 1;\n      this.lastFailureAt = Date.now();\n\n      if (this.failures >= this.failureThreshold) {\n        this.state = \"open\";\n      }\n\n      throw error;\n    }\n  }\n}\n"
+    }
+  },
+  "simple-queue": {
+    "id": "simple-queue",
+    "name": "In-memory job queue",
+    "description": "SimpleQueue worker with retries",
+    "files": {
+      "src/lib/simpleQueue.ts": "type Job<T> = {\n  id: string;\n  payload: T;\n  attempt: number;\n};\n\nexport class SimpleQueue<T> {\n  private queue: Job<T>[] = [];\n  private processing = false;\n\n  constructor(\n    private worker: (job: Job<T>) => Promise<void>,\n    private maxRetries = 3,\n  ) {}\n\n  enqueue(payload: T): void {\n    this.queue.push({\n      id: crypto.randomUUID(),\n      payload,\n      attempt: 0,\n    });\n\n    void this.process();\n  }\n\n  private async process(): Promise<void> {\n    if (this.processing) return;\n    this.processing = true;\n\n    while (this.queue.length > 0) {\n      const job = this.queue.shift()!;\n\n      try {\n        await this.worker(job);\n      } catch (error) {\n        job.attempt += 1;\n\n        if (job.attempt < this.maxRetries) {\n          this.queue.push(job);\n        } else {\n          console.error(\"Job failed permanently\", { jobId: job.id, error });\n        }\n      }\n    }\n\n    this.processing = false;\n  }\n}\n"
+    }
+  },
+  "vitest-unit": {
+    "id": "vitest-unit",
+    "name": "Vitest unit test",
+    "description": "Unit test example for parseAge",
+    "files": {
+      "tests/unit/parseAge.test.ts": "import { describe, expect, it } from \"vitest\";\nimport { parseAge } from \"../../src/lib/result\";\n\ndescribe(\"parseAge\", () => {\n  it(\"parses valid age\", () => {\n    const result = parseAge(\"25\");\n    expect(result.ok).toBe(true);\n  });\n\n  it(\"rejects non-numeric input\", () => {\n    const result = parseAge(\"abc\");\n    expect(result.ok).toBe(false);\n  });\n\n  it(\"rejects negative age\", () => {\n    const result = parseAge(\"-1\");\n    expect(result.ok).toBe(false);\n  });\n});\n"
+    }
+  },
+  "vitest-integration": {
+    "id": "vitest-integration",
+    "name": "Vitest integration test",
+    "description": "API health endpoint integration test",
+    "files": {
+      "tests/integration/health.test.ts": "import { describe, expect, it, beforeAll, afterAll } from \"vitest\";\nimport { createApp } from \"../../src/app\";\n\ndescribe(\"health endpoint\", () => {\n  let server: any;\n  let baseUrl: string;\n\n  beforeAll(async () => {\n    const app = createApp();\n    server = app.listen(0);\n    const address = server.address();\n    baseUrl = `http://localhost:${address.port}`;\n  });\n\n  afterAll(() => {\n    server?.close();\n  });\n\n  it(\"returns ok\", async () => {\n    const res = await fetch(`${baseUrl}/health`);\n    expect(res.status).toBe(200);\n\n    const body = await res.json();\n    expect(body.status).toBe(\"ok\");\n  });\n});\n"
+    }
+  },
+  "playwright-e2e": {
+    "id": "playwright-e2e",
+    "name": "Playwright e2e tests",
+    "description": "Homepage + health e2e tests",
+    "files": {
+      "tests/e2e/home.spec.ts": "import { test, expect } from \"@playwright/test\";\n\ntest.beforeEach(async ({ page }) => {\n  await page.goto(\"http://localhost:3000\");\n});\n\ntest(\"homepage loads\", async ({ page }) => {\n  await expect(page.locator(\"h1\")).toContainText(\"App\");\n});\n\ntest(\"health endpoint responds\", async ({ request }) => {\n  const response = await request.get(\"/health\");\n  expect(response.status()).toBe(200);\n\n  const body = await response.json();\n  expect(body.status).toBe(\"ok\");\n});\n"
+    }
+  },
+  "playwright-config": {
+    "id": "playwright-config",
+    "name": "Playwright config",
+    "description": "playwright.config.ts with webServer",
+    "files": {
+      "playwright.config.ts": "import { defineConfig, devices } from \"@playwright/test\";\n\nexport default defineConfig({\n  testDir: \"./tests/e2e\",\n  fullyParallel: true,\n  retries: 2,\n  use: {\n    baseURL: \"http://localhost:3000\",\n    trace: \"on-first-retry\",\n  },\n  projects: [\n    {\n      name: \"chromium\",\n      use: { ...devices[\"Desktop Chrome\"] },\n    },\n  ],\n  webServer: {\n    command: \"npm run dev\",\n    url: \"http://localhost:3000\",\n    reuseExistingServer: !process.env.CI,\n  },\n});\n"
+    }
+  },
+  "monorepo-turbo": {
+    "id": "monorepo-turbo",
+    "name": "Turborepo monorepo",
+    "description": "npm workspaces + turbo root scaffold",
+    "files": {
+      "package.json": "{\n  \"name\": \"{{PROJECT_NAME}}\",\n  \"private\": true,\n  \"workspaces\": [\n    \"apps/*\",\n    \"packages/*\"\n  ],\n  \"scripts\": {\n    \"dev\": \"turbo run dev\",\n    \"build\": \"turbo run build\",\n    \"test\": \"turbo run test\",\n    \"lint\": \"turbo run lint\",\n    \"typecheck\": \"turbo run typecheck\"\n  },\n  \"devDependencies\": {\n    \"turbo\": \"^2.0.0\"\n  }\n}\n",
+      "turbo.json": "{\n  \"$schema\": \"https://turbo.build/schema.json\",\n  \"tasks\": {\n    \"build\": {\n      \"dependsOn\": [\"^build\"],\n      \"outputs\": [\"dist/**\", \".next/**\"]\n    },\n    \"dev\": {\n      \"cache\": false,\n      \"persistent\": true\n    },\n    \"test\": {\n      \"dependsOn\": [\"^build\"]\n    },\n    \"lint\": {},\n    \"typecheck\": {}\n  }\n}\n",
+      "apps/web/package.json": "{\n  \"name\": \"@{{PROJECT_NAME}}/web\",\n  \"private\": true,\n  \"scripts\": {\n    \"dev\": \"echo web-dev\",\n    \"build\": \"echo web-build\",\n    \"test\": \"echo web-test\",\n    \"lint\": \"echo web-lint\",\n    \"typecheck\": \"echo web-typecheck\"\n  }\n}\n",
+      "apps/api/package.json": "{\n  \"name\": \"@{{PROJECT_NAME}}/api\",\n  \"private\": true,\n  \"scripts\": {\n    \"dev\": \"echo api-dev\",\n    \"build\": \"echo api-build\",\n    \"test\": \"echo api-test\",\n    \"lint\": \"echo api-lint\",\n    \"typecheck\": \"echo api-typecheck\"\n  }\n}\n",
+      "packages/ui/package.json": "{\n  \"name\": \"@{{PROJECT_NAME}}/ui\",\n  \"private\": true,\n  \"main\": \"src/index.ts\"\n}\n",
+      "packages/ui/src/index.ts": "export const brand = '{{PROJECT_NAME}}';\n",
+      "packages/types/package.json": "{\n  \"name\": \"@{{PROJECT_NAME}}/types\",\n  \"private\": true,\n  \"main\": \"src/index.ts\"\n}\n",
+      "packages/types/src/index.ts": "export type Id = string;\n",
+      "README.md": "# {{PROJECT_NAME}}\n\nTurborepo monorepo (`apps/*`, `packages/*`).\n\n```bash\nnpm install\nnpm run dev\n```\n"
+    }
+  },
+  "k8s-basic": {
+    "id": "k8s-basic",
+    "name": "Kubernetes manifests",
+    "description": "Deployment + Service + Ingress",
+    "files": {
+      "k8s/deployment.yaml": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: app\n  labels:\n    app: app\nspec:\n  replicas: 3\n  selector:\n    matchLabels:\n      app: app\n  template:\n    metadata:\n      labels:\n        app: app\n    spec:\n      containers:\n        - name: app\n          image: app:latest\n          ports:\n            - containerPort: 3000\n          envFrom:\n            - configMapRef:\n                name: app-config\n            - secretRef:\n                name: app-secrets\n          resources:\n            requests:\n              cpu: 100m\n              memory: 128Mi\n            limits:\n              cpu: 500m\n              memory: 512Mi\n          livenessProbe:\n            httpGet:\n              path: /health\n              port: 3000\n            initialDelaySeconds: 10\n            periodSeconds: 15\n          readinessProbe:\n            httpGet:\n              path: /health\n              port: 3000\n            initialDelaySeconds: 5\n            periodSeconds: 10\n",
+      "k8s/service.yaml": "apiVersion: v1\nkind: Service\nmetadata:\n  name: app\nspec:\n  selector:\n    app: app\n  ports:\n    - port: 80\n      targetPort: 3000\n  type: ClusterIP\n",
+      "k8s/ingress.yaml": "apiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata:\n  name: app\nspec:\n  rules:\n    - host: app.example.com\n      http:\n        paths:\n          - path: /\n            pathType: Prefix\n            backend:\n              service:\n                name: app\n                port:\n                  number: 80\n"
+    }
+  },
+  "helm-chart": {
+    "id": "helm-chart",
+    "name": "Helm chart skeleton",
+    "description": "Full Helm chart: Chart.yaml, values, deployment, service, ingress, configmap, secret, hpa, helpers",
+    "files": {
+      "chart/Chart.yaml": "apiVersion: v2\nname: {{PROJECT_NAME}}\ndescription: A Helm chart for {{PROJECT_NAME}}\ntype: application\nversion: 0.1.0\nappVersion: \"1.0.0\"\n",
+      "chart/values.yaml": "replicaCount: 2\n\nimage:\n  repository: app\n  tag: latest\n  pullPolicy: IfNotPresent\n\nservice:\n  type: ClusterIP\n  port: 80\n  targetPort: 3000\n\ningress:\n  enabled: false\n  className: \"\"\n  host: app.example.com\n  tls: []\n\nenv:\n  NODE_ENV: production\n  LOG_LEVEL: info\n\nsecrets:\n  DATABASE_URL: \"postgres://user:password@postgres:5432/app\"\n  JWT_SECRET: \"replace-me\"\n\nresources:\n  requests:\n    cpu: 100m\n    memory: 128Mi\n  limits:\n    cpu: 500m\n    memory: 512Mi\n\nautoscaling:\n  enabled: false\n  minReplicas: 2\n  maxReplicas: 10\n  targetCPUUtilizationPercentage: 80\n",
+      "chart/templates/_helpers.tpl": "{{/*\nExpand the chart name.\n*/}}\n{{- define \"app.name\" -}}\n{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix \"-\" -}}\n{{- end -}}\n\n{{/*\nCreate a default fully qualified app name.\n*/}}\n{{- define \"app.fullname\" -}}\n{{- if .Values.fullnameOverride -}}\n{{- .Values.fullnameOverride | trunc 63 | trimSuffix \"-\" -}}\n{{- else -}}\n{{- $name := default .Chart.Name .Values.nameOverride -}}\n{{- if contains $name .Release.Name -}}\n{{- .Release.Name | trunc 63 | trimSuffix \"-\" -}}\n{{- else -}}\n{{- printf \"%s-%s\" .Release.Name $name | trunc 63 | trimSuffix \"-\" -}}\n{{- end -}}\n{{- end -}}\n{{- end -}}\n\n{{/*\nCommon labels\n*/}}\n{{- define \"app.labels\" -}}\napp.kubernetes.io/name: {{ include \"app.name\" . }}\napp.kubernetes.io/instance: {{ .Release.Name }}\napp.kubernetes.io/version: {{ .Chart.AppVersion | quote }}\napp.kubernetes.io/managed-by: {{ .Release.Service }}\n{{- end -}}\n\n{{/*\nSelector labels\n*/}}\n{{- define \"app.selectorLabels\" -}}\napp.kubernetes.io/name: {{ include \"app.name\" . }}\napp.kubernetes.io/instance: {{ .Release.Name }}\n{{- end -}}\n",
+      "chart/templates/deployment.yaml": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: {{ include \"app.fullname\" . }}\n  labels:\n    {{- include \"app.labels\" . | nindent 4 }}\nspec:\n  {{- if not .Values.autoscaling.enabled }}\n  replicas: {{ .Values.replicaCount }}\n  {{- end }}\n  selector:\n    matchLabels:\n      {{- include \"app.selectorLabels\" . | nindent 6 }}\n  template:\n    metadata:\n      labels:\n        {{- include \"app.selectorLabels\" . | nindent 8 }}\n    spec:\n      containers:\n        - name: app\n          image: \"{{ .Values.image.repository }}:{{ .Values.image.tag }}\"\n          imagePullPolicy: {{ .Values.image.pullPolicy }}\n          ports:\n            - name: http\n              containerPort: {{ .Values.service.targetPort }}\n          envFrom:\n            - configMapRef:\n                name: {{ include \"app.fullname\" . }}\n            - secretRef:\n                name: {{ include \"app.fullname\" . }}\n          resources:\n            {{- toYaml .Values.resources | nindent 12 }}\n          livenessProbe:\n            httpGet:\n              path: /health\n              port: http\n            initialDelaySeconds: 10\n            periodSeconds: 15\n          readinessProbe:\n            httpGet:\n              path: /health\n              port: http\n            initialDelaySeconds: 5\n            periodSeconds: 10\n",
+      "chart/templates/service.yaml": "apiVersion: v1\nkind: Service\nmetadata:\n  name: {{ include \"app.fullname\" . }}\n  labels:\n    {{- include \"app.labels\" . | nindent 4 }}\nspec:\n  type: {{ .Values.service.type }}\n  selector:\n    {{- include \"app.selectorLabels\" . | nindent 4 }}\n  ports:\n    - port: {{ .Values.service.port }}\n      targetPort: {{ .Values.service.targetPort }}\n      protocol: TCP\n      name: http\n",
+      "chart/templates/ingress.yaml": "{{- if .Values.ingress.enabled -}}\napiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata:\n  name: {{ include \"app.fullname\" . }}\n  labels:\n    {{- include \"app.labels\" . | nindent 4 }}\nspec:\n  {{- if .Values.ingress.className }}\n  ingressClassName: {{ .Values.ingress.className }}\n  {{- end }}\n  rules:\n    - host: {{ .Values.ingress.host | quote }}\n      http:\n        paths:\n          - path: /\n            pathType: Prefix\n            backend:\n              service:\n                name: {{ include \"app.fullname\" . }}\n                port:\n                  number: {{ .Values.service.port }}\n  {{- with .Values.ingress.tls }}\n  tls:\n    {{- toYaml . | nindent 4 }}\n  {{- end }}\n{{- end }}\n",
+      "chart/templates/configmap.yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ include \"app.fullname\" . }}\n  labels:\n    {{- include \"app.labels\" . | nindent 4 }}\ndata:\n  {{- range $key, $value := .Values.env }}\n  {{ $key }}: {{ $value | quote }}\n  {{- end }}\n",
+      "chart/templates/secret.yaml": "apiVersion: v1\nkind: Secret\nmetadata:\n  name: {{ include \"app.fullname\" . }}\n  labels:\n    {{- include \"app.labels\" . | nindent 4 }}\ntype: Opaque\nstringData:\n  {{- range $key, $value := .Values.secrets }}\n  {{ $key }}: {{ $value | quote }}\n  {{- end }}\n",
+      "chart/templates/hpa.yaml": "{{- if .Values.autoscaling.enabled }}\napiVersion: autoscaling/v2\nkind: HorizontalPodAutoscaler\nmetadata:\n  name: {{ include \"app.fullname\" . }}\n  labels:\n    {{- include \"app.labels\" . | nindent 4 }}\nspec:\n  scaleTargetRef:\n    apiVersion: apps/v1\n    kind: Deployment\n    name: {{ include \"app.fullname\" . }}\n  minReplicas: {{ .Values.autoscaling.minReplicas }}\n  maxReplicas: {{ .Values.autoscaling.maxReplicas }}\n  metrics:\n    - type: Resource\n      resource:\n        name: cpu\n        target:\n          type: Utilization\n          averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}\n{{- end }}\n"
+    }
+  }
+}

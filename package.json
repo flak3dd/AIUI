@@ -1,0 +1,37 @@
+{
+  "name": "web-api-app",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview",
+    "stack": "bash ./start-stack.sh",
+    "stack:status": "bash ./start-stack.sh status",
+    "stack:stop": "bash ./start-stack.sh stop",
+    "monitor:agent": "node ./scripts/monitor-agent-responses.mjs",
+    "monitor:agent:probe": "node ./scripts/monitor-agent-responses.mjs --probe",
+    "monitor:agent:tail": "node ./scripts/monitor-agent-responses.mjs --tail",
+    "spark:restart": "node ./scripts/restart-spark.mjs",
+    "spark:status": "node ./scripts/restart-spark.mjs --status",
+    "sys:summary": "node ./scripts/sys-summary.mjs",
+    "git:inspect": "node ./scripts/git-inspect.mjs",
+    "git:push": "node ./scripts/git-sync.mjs"
+  },
+  "dependencies": {
+    "@tanstack/react-virtual": "^3.14.13",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.1.1",
+    "oxlint": "^1.81.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.3.0"
+  }
+}
