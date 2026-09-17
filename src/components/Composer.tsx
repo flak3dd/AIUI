@@ -263,12 +263,12 @@ export function Composer(props: ComposerProps) {
                     onClick={() => {
                       const next = !settings.deepBuild
                       persist({ ...settings, deepBuild: next })
-                      showToast(`Deep build ${next ? 'enabled' : 'disabled'}`, { type: 'info' })
+                      showToast(`Deep Reasoning ${next ? 'on' : 'off'}`, { type: 'info' })
                     }}
                     disabled={busy}
-                    title="Deep Thinking & Comprehensive Architecture Plan"
+                    title="Deep Reasoning — model thinking traces + thorough agent budget"
                   >
-                    🧠 Deep
+                    🧠 Deep Reasoning
                   </button>
 
                   <button

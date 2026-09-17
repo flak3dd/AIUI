@@ -3,6 +3,9 @@ import type { BashExecResult } from '../lib/bashShell'
 
 export interface MessageContentProps {
   content: string
+  /** Native model reasoning_content for ThoughtTrail */
+  reasoning?: string
+  reasoningStreaming?: boolean
   msgId?: string
   inlineExecResults: Record<string, BashExecResult>
   executingInlineKey: string | null
@@ -15,6 +18,8 @@ export interface MessageContentProps {
 
 export function MessageContent({
   content,
+  reasoning,
+  reasoningStreaming = false,
   msgId = 'msg',
   inlineExecResults,
   executingInlineKey,
@@ -52,13 +57,27 @@ export function MessageContent({
     parts.push({ type: 'text', content: targetContent.slice(lastIndex) })
   }
 
-  if (thinkBlocks.length === 0 && parts.length === 1 && parts[0].type === 'text') {
+  if (
+    !(reasoning?.trim()) &&
+    thinkBlocks.length === 0 &&
+    parts.length === 1 &&
+    parts[0].type === 'text'
+  ) {
     return <div style={{ whiteSpace: 'pre-wrap' }}>{content}</div>
   }
 
+  const nativeReasoning = reasoning?.trim() ?? ''
+  const tagBlocks = thinkBlocks.filter((b) => b !== nativeReasoning)
+
   return (
     <div>
-      {thinkBlocks.map((thinkContent, tidx) => (
+      {nativeReasoning ? (
+        <ThoughtTrail
+          thoughtText={nativeReasoning}
+          isStreaming={reasoningStreaming}
+        />
+      ) : null}
+      {tagBlocks.map((thinkContent, tidx) => (
         <ThoughtTrail key={`think_${tidx}`} thoughtText={thinkContent} />
       ))}
 

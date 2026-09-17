@@ -633,8 +633,9 @@ function MainApp() {
     toolsStripped?: boolean
   }> => {
     const assistantId = uid()
-    setMessages((m) => [...m, { id: assistantId, role: 'assistant', content: '' }])
+    setMessages((m) => [...m, { id: assistantId, role: 'assistant', content: '', reasoning: '' }])
     let acc = ''
+    let reasoningAcc = ''
     const body: Record<string, unknown> = {
       model: activeModelOverride || settingsRef.current.model,
       messages: working,
@@ -662,9 +663,31 @@ function MainApp() {
           if (!streamFlushRafRef.current) {
             streamFlushRafRef.current = requestAnimationFrame(() => {
               streamFlushRafRef.current = 0
-              const snapshot = acc
+              const contentSnap = acc
+              const reasoningSnap = reasoningAcc
               setMessages((msgs) =>
-                msgs.map((msg) => (msg.id === assistantId ? { ...msg, content: snapshot } : msg)),
+                msgs.map((msg) =>
+                  msg.id === assistantId
+                    ? { ...msg, content: contentSnap, reasoning: reasoningSnap }
+                    : msg,
+                ),
+              )
+            })
+          }
+        },
+        onReasoning: (t) => {
+          reasoningAcc += t
+          if (!streamFlushRafRef.current) {
+            streamFlushRafRef.current = requestAnimationFrame(() => {
+              streamFlushRafRef.current = 0
+              const contentSnap = acc
+              const reasoningSnap = reasoningAcc
+              setMessages((msgs) =>
+                msgs.map((msg) =>
+                  msg.id === assistantId
+                    ? { ...msg, content: contentSnap, reasoning: reasoningSnap }
+                    : msg,
+                ),
               )
             })
           }
@@ -674,13 +697,18 @@ function MainApp() {
         },
       },
       controller.signal,
+      { enableThinking: Boolean(settingsRef.current.deepBuild) },
     )
     const durationMs = Date.now() - t0
     if (streamFlushRafRef.current) {
       cancelAnimationFrame(streamFlushRafRef.current)
       streamFlushRafRef.current = 0
       setMessages((msgs) =>
-        msgs.map((msg) => (msg.id === assistantId ? { ...msg, content: acc } : msg)),
+        msgs.map((msg) =>
+          msg.id === assistantId
+            ? { ...msg, content: acc, reasoning: reasoningAcc || undefined }
+            : msg,
+        ),
       )
     }
 

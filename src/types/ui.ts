@@ -5,6 +5,8 @@ export type UiMessage = {
   id: string
   role: 'user' | 'assistant' | 'tool'
   content: string
+  /** Native model reasoning / thinking trace for ThoughtTrail */
+  reasoning?: string
   execResult?: BashExecResult
   ragCitations?: string[]
   /** tool_call_id for role:'tool' messages — required by strict OpenAI-compatible APIs */
