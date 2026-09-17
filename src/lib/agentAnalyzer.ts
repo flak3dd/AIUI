@@ -8,6 +8,8 @@
  * 5. Provide circuit-breaker protection against runaway loops.
  */
 
+import { isVerificationStageCommand } from './goalVerification'
+
 export interface ActionRecord {
   round: number
   command?: string
@@ -356,12 +358,7 @@ export class AgentAnalyzer {
     // Update Stage Tracking
     if (current.filesModified && current.filesModified.length > 0) {
       this.currentStage = 'implementation'
-    } else if (
-      current.command &&
-      /(test|pytest|npm test|vitest|node .*test|check|verify|curl|python3 -m unittest)/i.test(
-        current.command
-      )
-    ) {
+    } else if (current.command && isVerificationStageCommand(current.command)) {
       this.currentStage = 'verification'
     } else if (current.exitCode === 0 && prev && prev.exitCode !== undefined && prev.exitCode !== 0) {
       this.currentStage = 'verification'
@@ -370,7 +367,7 @@ export class AgentAnalyzer {
     if (
       current.exitCode === 0 &&
       current.command &&
-      /(test|pytest|npm test|vitest|unittest|\bcurl\b|verify)/i.test(current.command)
+      isVerificationStageCommand(current.command)
     ) {
       this.currentStage = 'completion'
     }
