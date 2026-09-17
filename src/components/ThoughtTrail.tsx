@@ -12,9 +12,37 @@ interface ReasoningPhase {
   content: string
 }
 
+export function extractDotPoints(text: string): string[] {
+  if (!text.trim()) return []
+  const lines = text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+
+  const hasExplicitBullets = lines.some((l) => /^[-*•·▪›]\s+|\d+[.)]\s+/.test(l))
+  if (hasExplicitBullets) {
+    return lines
+      .map((l) => l.replace(/^[-*•·▪›]\s+|\d+[.)]\s+/, '').trim())
+      .filter(Boolean)
+  }
+
+  // Split into sentence-based dotpoints if multi-sentence
+  const sentences = text
+    .split(/(?<=[.?!])\s+(?=[A-Z0-9"'])|\n+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 5)
+
+  if (sentences.length > 1) {
+    return sentences
+  }
+
+  return [text.trim()]
+}
+
 export const ThoughtTrail: React.FC<ThoughtTrailProps> = ({ thoughtText, isStreaming = false }) => {
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [viewMode, setViewMode] = useState<'dotpoints' | 'raw'>('dotpoints')
 
   const tokenCount = useMemo(() => {
     return Math.max(1, Math.round(thoughtText.length / 3.8))
@@ -81,7 +109,7 @@ export const ThoughtTrail: React.FC<ThoughtTrailProps> = ({ thoughtText, isStrea
             className="thought-trail-icon-img"
           />
           <span className="thought-trail-title">
-            {isStreaming ? 'Thinking in progress…' : 'Deep Thinking Trail'}
+            {isStreaming ? 'Thinking in progress…' : 'Dotpoint Thinking Logic'}
           </span>
           <span className="thought-trail-badge">
             {tokenCount} tokens
@@ -94,13 +122,31 @@ export const ThoughtTrail: React.FC<ThoughtTrailProps> = ({ thoughtText, isStrea
         </div>
 
         <div className="thought-trail-right" onClick={(e) => e.stopPropagation()}>
+          <div className="thought-view-toggle">
+            <button
+              type="button"
+              className={`thought-mode-btn ${viewMode === 'dotpoints' ? 'active' : ''}`}
+              onClick={() => setViewMode('dotpoints')}
+              title="Dotpoint thinking mode"
+            >
+              • Dotpoints
+            </button>
+            <button
+              type="button"
+              className={`thought-mode-btn ${viewMode === 'raw' ? 'active' : ''}`}
+              onClick={() => setViewMode('raw')}
+              title="Raw thinking stream"
+            >
+              ≡ Raw
+            </button>
+          </div>
           <button
             type="button"
             className="thought-copy-btn"
             onClick={handleCopy}
             title="Copy full reasoning text"
           >
-            {copied ? '✔ Copied' : 'Copy Trace'}
+            {copied ? '✔ Copied' : 'Copy'}
           </button>
           <button
             type="button"
@@ -114,16 +160,30 @@ export const ThoughtTrail: React.FC<ThoughtTrailProps> = ({ thoughtText, isStrea
 
       {expanded && (
         <div className="thought-trail-body">
-          {phases.map((phase, idx) => (
-            <div key={phase.id} className="thought-phase-item">
-              <div className="thought-phase-header">
-                <span className="phase-icon">{phase.icon}</span>
-                <span className="phase-step-num">Step {idx + 1}</span>
-                <span className="phase-label">{phase.label}</span>
+          {phases.map((phase, idx) => {
+            const points = extractDotPoints(phase.content)
+            return (
+              <div key={phase.id} className="thought-phase-item">
+                <div className="thought-phase-header">
+                  <span className="phase-icon">{phase.icon}</span>
+                  <span className="phase-step-num">Step {idx + 1}</span>
+                  <span className="phase-label">{phase.label}</span>
+                </div>
+                {viewMode === 'dotpoints' ? (
+                  <ul className="thought-dotpoints-list">
+                    {points.map((pt, pidx) => (
+                      <li key={pidx} className="thought-dotpoint-item">
+                        <span className="thought-dotpoint-bullet">›</span>
+                        <span className="thought-dotpoint-text">{pt}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="thought-phase-content">{phase.content}</div>
+                )}
               </div>
-              <div className="thought-phase-content">{phase.content}</div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>

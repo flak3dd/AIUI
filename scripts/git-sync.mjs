@@ -48,30 +48,20 @@ async function main() {
   const statusRes = run('git status --short');
 
   // 4. Commit
-  const commitMsg = 'feat(aiui): initial release with iPhone PWA support, draughtsman laser canvas, and glitch header';
+  const defaultMsg = 'feat(agent): dotpoint thinking logic and consolidated bash workings section';
+  const commitMsg = process.argv[2] || defaultMsg;
   console.log('Committing changes...');
   run(`git commit -m "${commitMsg}"`);
 
-  // 5. Create or configure remote and push via gh CLI
-  console.log('Checking/creating GitHub remote flak3dd/AIUI...');
-  const ghCreateRes = run('gh repo create flak3dd/AIUI --public --source=. --remote=origin --push');
-
-  if (!ghCreateRes.ok) {
-    console.log('gh repo create returned error, checking if repo already exists or setting remote manually...');
-    // Ensure remote origin is set
-    const remotes = run('git remote -v').output || '';
-    if (!remotes.includes('origin')) {
-      run('git remote add origin https://github.com/flak3dd/AIUI.git');
-    } else {
-      run('git remote set-url origin https://github.com/flak3dd/AIUI.git');
-    }
-    console.log('Attempting git push to origin main...');
+  // 5. Push to origin main
+  console.log('Pushing to origin main...');
+  const pushRes = run('git push origin main');
+  if (!pushRes.ok) {
     run('git push -u origin main');
   }
 
   console.log('\n=== FINAL REPO STATUS ===');
   run('git status');
-  run('git remote -v');
   run('git log -n 2 --oneline');
 }
 

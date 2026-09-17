@@ -2826,6 +2826,292 @@ button.btn-sm {
   overflow-y: auto;
 }
 
+/* Dotpoint Thinking Logic & Thought Trail enhancements */
+.thought-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: rgba(0, 0, 0, 0.35);
+  padding: 2px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.thought-mode-btn {
+  background: transparent;
+  border: none;
+  color: var(--dracula-comment);
+  font-size: 10px;
+  font-family: var(--font-mono);
+  padding: 2px 6px;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.thought-mode-btn.active {
+  background: rgba(var(--accent-rgb), 0.25);
+  color: var(--dracula-purple);
+  font-weight: 600;
+}
+
+.thought-dotpoints-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: rgba(18, 19, 26, 0.5);
+  border-radius: 0 0 6px 6px;
+}
+
+.thought-dotpoint-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #d1d5db;
+  font-family: var(--font-mono);
+}
+
+.thought-dotpoint-bullet {
+  color: var(--dracula-cyan);
+  font-size: 13px;
+  line-height: 1.3;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.thought-dotpoint-text {
+  flex: 1;
+  word-break: break-word;
+}
+
+/* Agent Consolidated Bash Workings Section */
+.agent-bash-section-card {
+  margin: 8px 0 12px 0;
+  border: 1px solid rgba(80, 250, 123, 0.28);
+  border-radius: 8px;
+  background: rgba(16, 18, 24, 0.85);
+  overflow: hidden;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.agent-bash-section-card:hover {
+  border-color: rgba(80, 250, 123, 0.45);
+}
+
+.agent-bash-header {
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  background: rgba(24, 27, 36, 0.95);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  user-select: none;
+}
+
+.agent-bash-header:hover {
+  background: rgba(32, 36, 48, 0.95);
+}
+
+.agent-bash-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.agent-bash-term-icon {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--dracula-green);
+  background: rgba(80, 250, 123, 0.12);
+  padding: 2px 5px;
+  border-radius: 4px;
+}
+
+.agent-bash-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #f8f8f2;
+  letter-spacing: 0.2px;
+}
+
+.agent-bash-badge {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(189, 147, 249, 0.16);
+  color: var(--dracula-purple);
+}
+
+.agent-bash-status-pill {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.agent-bash-status-pill.status-ok {
+  background: rgba(80, 250, 123, 0.15);
+  color: var(--dracula-green);
+  border: 1px solid rgba(80, 250, 123, 0.3);
+}
+
+.agent-bash-status-pill.status-fail {
+  background: rgba(255, 85, 85, 0.15);
+  color: var(--dracula-red);
+  border: 1px solid rgba(255, 85, 85, 0.3);
+}
+
+.agent-bash-duration {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--dracula-comment);
+}
+
+.agent-bash-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-bash-btn-copy,
+.agent-bash-toggle-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--dracula-comment);
+  font-size: 10.5px;
+  font-family: var(--font-mono);
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.agent-bash-btn-copy:hover,
+.agent-bash-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.agent-bash-body {
+  padding: 8px 12px 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(12, 14, 18, 0.7);
+}
+
+.agent-bash-entry {
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 6px;
+  background: rgba(19, 21, 29, 0.8);
+  overflow: hidden;
+}
+
+.agent-bash-cmd-line {
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: rgba(28, 31, 42, 0.7);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.agent-bash-cmd-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  min-width: 0;
+  flex: 1;
+}
+
+.agent-bash-prompt {
+  color: var(--dracula-cyan);
+  font-weight: bold;
+  user-select: none;
+}
+
+.agent-bash-cmd-text {
+  color: #50fa7b;
+  word-break: break-all;
+  font-weight: 500;
+}
+
+.agent-bash-cmd-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.agent-bash-exit-badge {
+  font-size: 9.5px;
+  font-family: var(--font-mono);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+
+.agent-bash-exit-badge.exit-ok {
+  background: rgba(80, 250, 123, 0.15);
+  color: var(--dracula-green);
+}
+
+.agent-bash-exit-badge.exit-fail {
+  background: rgba(255, 85, 85, 0.18);
+  color: var(--dracula-red);
+}
+
+.agent-bash-time,
+.agent-bash-target {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--dracula-comment);
+}
+
+.agent-bash-mini-copy {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--dracula-comment);
+  font-size: 9.5px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.agent-bash-mini-copy:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.agent-bash-output {
+  margin: 0;
+  padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  color: #cfd3dc;
+  background: rgba(10, 12, 16, 0.9);
+  max-height: 220px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+
 /* ==============================================================================
    Feature 3 & 5: RAG Citations & Project ZIP Exporter
    ============================================================================== */

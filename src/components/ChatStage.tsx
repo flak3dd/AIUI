@@ -1,7 +1,8 @@
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, useMemo } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { QuickStartHero } from './QuickStartHero'
 import { MessageContent } from './MessageContent'
+import { AgentBashWorkingsSection } from './AgentBashWorkingsSection'
 import type { UiMessage } from '../types/ui'
 import type { BashExecResult } from '../lib/bashShell'
 
@@ -27,6 +28,10 @@ export interface ChatStageProps {
 
 const VIRTUALIZE_AFTER = 40
 
+type ChatItem =
+  | { type: 'message'; message: UiMessage }
+  | { type: 'tool_group'; id: string; messages: UiMessage[] }
+
 export function ChatStage({
   messages,
   sparkHost,
@@ -48,10 +53,39 @@ export function ChatStage({
 }: ChatStageProps) {
   const parentRef = useRef<HTMLDivElement | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
-  const useVirtual = messages.length >= VIRTUALIZE_AFTER
+
+  // Group consecutive tool messages into a single consolidated bash workings section
+  const chatItems = useMemo<ChatItem[]>(() => {
+    const items: ChatItem[] = []
+    let currentToolGroup: UiMessage[] = []
+
+    const flushToolGroup = () => {
+      if (currentToolGroup.length > 0) {
+        items.push({
+          type: 'tool_group',
+          id: `tg_${currentToolGroup[0].id}`,
+          messages: [...currentToolGroup],
+        })
+        currentToolGroup = []
+      }
+    }
+
+    for (const m of messages) {
+      if (m.role === 'tool') {
+        currentToolGroup.push(m)
+      } else {
+        flushToolGroup()
+        items.push({ type: 'message', message: m })
+      }
+    }
+    flushToolGroup()
+    return items
+  }, [messages])
+
+  const useVirtual = chatItems.length >= VIRTUALIZE_AFTER
 
   const virtualizer = useVirtualizer({
-    count: useVirtual ? messages.length : 0,
+    count: useVirtual ? chatItems.length : 0,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 140,
     overscan: 10,
@@ -62,11 +96,11 @@ export function ChatStage({
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
       return
     }
-    if (messages.length > 0) {
-      virtualizer.scrollToIndex(messages.length - 1, { align: 'end' })
+    if (chatItems.length > 0) {
+      virtualizer.scrollToIndex(chatItems.length - 1, { align: 'end' })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scrollToken, messages.length, useVirtual])
+  }, [scrollToken, chatItems.length, useVirtual])
 
   const showHero = messages.length === 1 && messages[0]?.id === 'welcome'
 
@@ -167,7 +201,18 @@ export function ChatStage({
 
           {!useVirtual && (
             <>
-              {messages.map((m) => renderBubble(m))}
+              {chatItems.map((item) =>
+                item.type === 'tool_group' ? (
+                  <AgentBashWorkingsSection
+                    key={item.id}
+                    messages={item.messages}
+                    copiedCellKey={copiedCellKey}
+                    onCopyCode={onCopyCode}
+                  />
+                ) : (
+                  renderBubble(item.message)
+                ),
+              )}
               <div ref={bottomRef} />
             </>
           )}
@@ -178,10 +223,11 @@ export function ChatStage({
               style={{ height: virtualizer.getTotalSize(), width: '100%', position: 'relative' }}
             >
               {virtualizer.getVirtualItems().map((row) => {
-                const m = messages[row.index]
+                const item = chatItems[row.index]
+                if (!item) return null
                 return (
                   <div
-                    key={m.id}
+                    key={item.type === 'tool_group' ? item.id : item.message.id}
                     data-index={row.index}
                     ref={virtualizer.measureElement}
                     className="virtual-message-row"
@@ -193,7 +239,15 @@ export function ChatStage({
                       transform: `translateY(${row.start}px)`,
                     }}
                   >
-                    {renderBubble(m)}
+                    {item.type === 'tool_group' ? (
+                      <AgentBashWorkingsSection
+                        messages={item.messages}
+                        copiedCellKey={copiedCellKey}
+                        onCopyCode={onCopyCode}
+                      />
+                    ) : (
+                      renderBubble(item.message)
+                    )}
                   </div>
                 )
               })}
