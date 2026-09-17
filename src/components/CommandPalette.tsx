@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import type { ExecutionTarget } from '../lib/bashShell'
 import { isGatedModelId, modelLabel } from '../lib/providers'
+import { getAllScaffolds } from '../lib/scaffoldTemplates'
 
 export interface CommandPaletteProps {
   isOpen: boolean
@@ -38,7 +39,7 @@ export interface CommandPaletteProps {
 interface PaletteAction {
   id: string
   title: string
-  category: 'Diagnostics' | 'Target' | 'Models' | 'Workspace' | 'Controls' | 'Memory'
+  category: 'Diagnostics' | 'Target' | 'Models' | 'Workspace' | 'Controls' | 'Memory' | 'Scaffolds'
   icon: string
   hint?: string
   badge?: string
@@ -283,6 +284,22 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         badge: mempalaceOnline ? 'ONLINE' : 'OFFLINE',
         run: onOpenSettings,
       }] : []),
+
+      // Scaffolds (Catalog of 52 standardized templates)
+      ...getAllScaffolds().map((scaffold) => ({
+        id: `scaffold-${scaffold.id}`,
+        title: `Scaffold: ${scaffold.name}`,
+        category: 'Scaffolds' as const,
+        icon: '🏗️',
+        badge: `${Object.keys(scaffold.files || {}).length} files`,
+        hint: scaffold.description,
+        run: () => {
+          onRunCommand(
+            `echo "=== SCAFFOLD: ${scaffold.name} (${scaffold.id}) ===" && echo "Files (${Object.keys(scaffold.files || {}).length}): ${Object.keys(scaffold.files || {}).join(', ')}"`,
+            currentTarget,
+          )
+        },
+      })),
     ]
 
     // Model Switcher Actions

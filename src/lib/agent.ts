@@ -15,6 +15,7 @@ import {
   type BashExecResult,
 } from './bashShell'
 import { searchMemory, checkpointMemory } from './mempalace'
+import { getAllScaffolds, getScaffoldFiles } from './scaffoldTemplates'
 
 export const AGENT_TOOLS = [
   {
@@ -258,6 +259,49 @@ export const AGENT_TOOLS = [
       parameters: {
         type: 'object',
         properties: {},
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_scaffolds',
+      description:
+        'List all 52 standardized project scaffolds (FastAPI, Go API, Node API, Next.js, Helm, K8s, Docker, Vitest, Playwright, Turborepo, Prisma, etc.).',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Optional keyword filter (e.g. docker, fastapi, k8s)' },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'apply_scaffold',
+      description:
+        'Apply and write a complete standardized project scaffold into the workspace or sandbox. Generates all required configs, code files, and Dockerfiles with {{PROJECT_NAME}} interpolated.',
+      parameters: {
+        type: 'object',
+        properties: {
+          templateId: {
+            type: 'string',
+            description: 'The template ID to apply (e.g. generic, node-api, fastapi, go-api, next-app, helm-chart, monorepo-turbo, etc.)',
+          },
+          projectName: {
+            type: 'string',
+            description: 'Name of the project to replace {{PROJECT_NAME}} placeholders (default: app)',
+          },
+          target: {
+            type: 'string',
+            enum: ['local_mac', 'dgx_spark'],
+            description: 'Target execution host (default: local_mac)',
+          },
+        },
+        required: ['templateId'],
         additionalProperties: false,
       },
     },
@@ -512,6 +556,85 @@ export async function runTool(
     return JSON.stringify(res)
   }
 
+  if (name === 'list_scaffolds') {
+    const q = String(args.query || '').toLowerCase()
+    const all = getAllScaffolds()
+    const filtered = q
+      ? all.filter(
+          (s) =>
+            s.id.toLowerCase().includes(q) ||
+            s.name.toLowerCase().includes(q) ||
+            s.description.toLowerCase().includes(q),
+        )
+      : all
+    return JSON.stringify({
+      ok: true,
+      count: filtered.length,
+      templates: filtered.map((s) => ({
+        id: s.id,
+        name: s.name,
+        description: s.description,
+        fileCount: Object.keys(s.files || {}).length,
+      })),
+    })
+  }
+
+  if (name === 'apply_scaffold') {
+    const templateId = String(args.templateId || '').trim()
+    const projectName = String(args.projectName || 'app').trim()
+    const target = (args.target as ExecutionTarget) || getStoredTarget()
+
+    const files = getScaffoldFiles(templateId, { projectName })
+    if (files.length === 0) {
+      return JSON.stringify({ ok: false, error: `Template not found: ${templateId}` })
+    }
+
+    invalidateFileCache()
+    const filePayload: Record<string, { content: string }> = {}
+    for (const f of files) {
+      filePayload[f.path] = { content: f.content }
+    }
+
+    try {
+      const res = await fetch(`${getSandboxBaseUrl()}/api/sandbox/materialize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          envId: 'web_session',
+          target,
+          files: filePayload,
+          replaceAll: false,
+        }),
+      })
+      if (res.ok) {
+        return JSON.stringify({
+          ok: true,
+          templateId,
+          projectName,
+          writtenFiles: files.map((f) => f.path),
+          message: `Successfully scaffolded ${templateId} with ${files.length} files`,
+        })
+      }
+    } catch {
+      // fallback to writing files via bash
+    }
+
+    for (const f of files) {
+      const b64 = btoa(unescape(encodeURIComponent(f.content)))
+      const cmd = `mkdir -p "$(dirname "${f.path}")" && echo "${b64}" | base64 -d > "${f.path}"`
+      const bRes = await executeBashCommand(cmd, target)
+      if (onBashResult) onBashResult(bRes)
+    }
+
+    return JSON.stringify({
+      ok: true,
+      templateId,
+      projectName,
+      writtenFiles: files.map((f) => f.path),
+      message: `Scaffolded ${templateId} (${files.length} files) via fallback write`,
+    })
+  }
+
   return JSON.stringify({ ok: false, error: `Unknown tool: ${name}` })
 }
 
@@ -539,6 +662,7 @@ const READ_ONLY_TOOLS = new Set([
   'list_models',
   'http_get_json',
   'list_linux_containers',
+  'list_scaffolds',
 ])
 
 /**
@@ -676,7 +800,7 @@ If the user asks you to run or change something and Agent Mode is off, explain t
 
 export const AGENT_SYSTEM = `You are Abliterated AI in Agent Mode — an autonomous systems engineer with live tools.
 
-Tools: bash, write_file, read_file, list_models, http_get_json, now, memory_search, memory_checkpoint, spawn_linux_container, destroy_linux_container, list_linux_containers.
+Tools: bash, write_file, read_file, list_models, http_get_json, now, memory_search, memory_checkpoint, spawn_linux_container, destroy_linux_container, list_linux_containers, list_scaffolds, apply_scaffold.
 Prefer native tool_calls. Only use <run>command</run> or fenced bash when tools are unavailable.
 Never fabricate stdout/stderr — only trust real tool results.
 

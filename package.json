@@ -18,7 +18,9 @@
     "spark:status": "node ./scripts/restart-spark.mjs --status",
     "sys:summary": "node ./scripts/sys-summary.mjs",
     "git:inspect": "node ./scripts/git-inspect.mjs",
-    "git:push": "node ./scripts/git-sync.mjs"
+    "git:push": "node ./scripts/git-sync.mjs",
+    "scaffolds:check": "node ./scripts/compare-scaffolds.mjs",
+    "scaffolds:verify": "node ./scripts/write-scaffolds.mjs"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.14.13",
