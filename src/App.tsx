@@ -76,6 +76,7 @@ import { ToastProvider, useToast } from './components/ToastNotification'
 import { queryRagKnowledge, formatRagContextBlock } from './lib/rag/ragService'
 import { exportProjectZip } from './lib/zipExporter'
 import { AgentAnalyzer, type ActionRecord, getAntiLoopPromptSuggestions, type AntiLoopSuggestion } from './lib/agentAnalyzer'
+import { shouldCountAsGoalVerified } from './lib/goalVerification'
 import { sendAgentDebugEvent } from './lib/agentDebugLogger'
 import { ChatStage } from './components/ChatStage'
 import { Composer } from './components/Composer'
@@ -1298,15 +1299,15 @@ function MainApp() {
         if (out.toolCalls > 0 || extracted.length > 0) {
           lastFailedCommand = null
           lastFailureRef.current = false
-          const verifyCmd =
-            !!lastCmdRun &&
-            /(test|pytest|npm test|vitest|unittest|\bcurl\b|verify)/i.test(lastCmdRun)
           const goalVerified =
             isAgent &&
             !out.hasFailure &&
             !anyExtractedFailed &&
-            lastExitCode === 0 &&
-            (verifyCmd || analysis.stage === 'completion')
+            shouldCountAsGoalVerified({
+              command: lastCmdRun,
+              exitCode: lastExitCode,
+              stdout: lastStdout,
+            })
 
           if (goalVerified) {
             setMessages((prev) => [
