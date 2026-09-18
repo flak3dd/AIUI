@@ -11,6 +11,7 @@ import {
   UNGATED_ALTERNATIVE,
   type StoredSettings,
   providerSupportsNativeTools,
+  SPARK_PREFER,
 } from './lib/providers'
 import {
   fetchModels,
@@ -626,6 +627,7 @@ function MainApp() {
     working: ChatMessage[]
     toolCalls: number
     content: string
+    reasoning: string
     hasFailure: boolean
     failedCmds: string[]
     executions: Array<{ name: string; rawResult: string; bashResult?: BashExecResult }>
@@ -649,60 +651,14 @@ function MainApp() {
       body.tools = AGENT_TOOLS
       body.tool_choice = 'auto'
     } else if (useTools) {
-      toolsStrippedNotice =
-        `Native API tools need provider Spark (qwen-abliterated). ` +
-        `Current provider is ${settingsRef.current.provider}; using markdown / Auto-Bash instead.`
+      // Unknown / future providers without tool support — Auto-Bash only (no scary banner).
+      toolsStrippedNotice = null
     }
-    const t0 = Date.now()
-    const result = await streamChat(
-      activeProvider(settingsRef.current),
-      body,
-      {
-        onToken: (t) => {
-          acc += t
-          if (!streamFlushRafRef.current) {
-            streamFlushRafRef.current = requestAnimationFrame(() => {
-              streamFlushRafRef.current = 0
-              const contentSnap = acc
-              const reasoningSnap = reasoningAcc
-              setMessages((msgs) =>
-                msgs.map((msg) =>
-                  msg.id === assistantId
-                    ? { ...msg, content: contentSnap, reasoning: reasoningSnap }
-                    : msg,
-                ),
-              )
-            })
-          }
-        },
-        onReasoning: (t) => {
-          reasoningAcc += t
-          if (!streamFlushRafRef.current) {
-            streamFlushRafRef.current = requestAnimationFrame(() => {
-              streamFlushRafRef.current = 0
-              const contentSnap = acc
-              const reasoningSnap = reasoningAcc
-              setMessages((msgs) =>
-                msgs.map((msg) =>
-                  msg.id === assistantId
-                    ? { ...msg, content: contentSnap, reasoning: reasoningSnap }
-                    : msg,
-                ),
-              )
-            })
-          }
-        },
-        onToolsStripped: (reason) => {
-          toolsStrippedNotice = reason
-        },
-      },
-      controller.signal,
-      { enableThinking: Boolean(settingsRef.current.deepBuild) },
-    )
-    const durationMs = Date.now() - t0
-    if (streamFlushRafRef.current) {
-      cancelAnimationFrame(streamFlushRafRef.current)
-      streamFlushRafRef.current = 0
+    const flushStreamUi = () => {
+      if (streamFlushRafRef.current) {
+        cancelAnimationFrame(streamFlushRafRef.current)
+        streamFlushRafRef.current = 0
+      }
       setMessages((msgs) =>
         msgs.map((msg) =>
           msg.id === assistantId
@@ -712,19 +668,115 @@ function MainApp() {
       )
     }
 
+    const runStream = async (enableThinking: boolean) => {
+      return streamChat(
+        activeProvider(settingsRef.current),
+        body,
+        {
+          onToken: (tok) => {
+            acc += tok
+            if (!streamFlushRafRef.current) {
+              streamFlushRafRef.current = requestAnimationFrame(() => {
+                streamFlushRafRef.current = 0
+                const contentSnap = acc
+                const reasoningSnap = reasoningAcc
+                setMessages((msgs) =>
+                  msgs.map((msg) =>
+                    msg.id === assistantId
+                      ? { ...msg, content: contentSnap, reasoning: reasoningSnap }
+                      : msg,
+                  ),
+                )
+              })
+            }
+          },
+          onReasoning: (tok) => {
+            reasoningAcc += tok
+            if (!streamFlushRafRef.current) {
+              streamFlushRafRef.current = requestAnimationFrame(() => {
+                streamFlushRafRef.current = 0
+                const contentSnap = acc
+                const reasoningSnap = reasoningAcc
+                setMessages((msgs) =>
+                  msgs.map((msg) =>
+                    msg.id === assistantId
+                      ? { ...msg, content: contentSnap, reasoning: reasoningSnap }
+                      : msg,
+                  ),
+                )
+              })
+            }
+          },
+          onToolsStripped: (reason) => {
+            toolsStrippedNotice = reason
+          },
+        },
+        controller.signal,
+        { enableThinking },
+      )
+    }
+
+    const wantThinking = Boolean(settingsRef.current.deepBuild)
+    const t0 = Date.now()
+    let result = await runStream(wantThinking)
+
+    // Deep/thinking models often finish with reasoning only — silent answer pass
+    if (
+      !(result.content || '').trim() &&
+      !result.tool_calls.length &&
+      wantThinking &&
+      !controller.signal.aborted
+    ) {
+      flushStreamUi()
+      const repairMsgs: ChatMessage[] = [
+        ...working,
+        {
+          role: 'assistant',
+          content: reasoningAcc
+            ? `(reasoning only — ${reasoningAcc.length} chars; answer missing)`
+            : null,
+        },
+        {
+          role: 'user',
+          content:
+            'Your previous turn produced no user-visible answer (empty content). ' +
+            'Reply now with the visible answer and/or native tool_calls. ' +
+            'Do not only think. An empty reply is not allowed.',
+        },
+      ]
+      body.messages = repairMsgs
+      // Keep reasoningAcc; stream answer into same bubble
+      result = await runStream(false)
+    }
+
+    const durationMs = Date.now() - t0
+    flushStreamUi()
+
 
     if (toolsStrippedNotice || result.toolsStripped) {
+      const prov = settingsRef.current.provider
+      const chip =
+        prov === 'spark'
+          ? 'tools stripped · restart Spark serve (tool-choice flags)'
+          : 'tools stripped · Auto-Bash · tap Use Spark for native tools'
       setMessages((msgs) => [
         ...msgs,
         {
           id: uid(),
           role: 'assistant',
-          content:
-            `⚠️ **Native tools unavailable** — ${toolsStrippedNotice || 'Provider stripped tool schemas.'}\n` +
-            `Agent will use markdown / Auto-Bash (\`<run>\` / \`\`\`bash) instead of API tool_calls. ` +
-            (settingsRef.current.provider === 'spark'
-              ? `Spark should already have \`--enable-auto-tool-choice\` + \`--tool-call-parser\`; restart the serve script if this persists.`
-              : `Switch provider to **Spark** / \`qwen-abliterated\` for native tool_calls.`),
+          name: 'status_chip',
+          content: chip,
+          ...(prov !== 'spark'
+            ? {
+                followUps: [
+                  {
+                    id: 'switch-spark',
+                    label: 'Use Spark',
+                    prompt: '__switch_provider_spark__',
+                  },
+                ],
+              }
+            : {}),
         },
       ])
     }
@@ -751,18 +803,37 @@ function MainApp() {
       }
     }
 
-    if (!result.content && !result.tool_calls.length) {
+    flushStreamUi()
+
+    let visibleContent = (result.content || '').trim()
+    if (!visibleContent && !result.tool_calls.length) {
+      visibleContent = ''
+      const hint =
+        reasoningAcc.trim()
+          ? '_No answer text after thinking. Retrying was attempted; try Chat mode or send again._'
+          : '_Empty model reply (no content, no tools). Try again or switch provider._'
       setMessages((msgs) =>
         msgs.map((msg) =>
-          msg.id === assistantId ? { ...msg, content: msg.content || '(empty response)' } : msg,
+          msg.id === assistantId
+            ? {
+                ...msg,
+                content: hint,
+                reasoning: reasoningAcc || msg.reasoning,
+              }
+            : msg,
         ),
       )
+      acc = hint
+    } else if (visibleContent && visibleContent !== acc) {
+      acc = result.content || visibleContent
+      flushStreamUi()
     }
+
     working = [
       ...working,
       {
         role: 'assistant',
-        content: result.content || null,
+        content: (result.content || '').trim() || (result.tool_calls.length ? null : acc) || null,
         tool_calls: result.tool_calls.length ? result.tool_calls : undefined,
       },
     ]
@@ -779,6 +850,7 @@ function MainApp() {
         working,
         toolCalls: 0,
         content: result.content || '',
+        reasoning: reasoningAcc,
         hasFailure: false,
         failedCmds: [],
         executions: [],
@@ -831,6 +903,7 @@ function MainApp() {
       working,
       toolCalls: result.tool_calls.length,
       content: result.content || '',
+        reasoning: reasoningAcc,
       hasFailure: toolResult.hasFailure,
       failedCmds: toolResult.failedCmds,
       executions: toolResult.executions,
@@ -957,6 +1030,7 @@ function MainApp() {
     let autoContinueCount = 0
     let maxRounds = ROUND_BATCH
     let finalContent = ''
+    let emptyAnswerRetries = 0
     let lastFailedCommand: string | null = null
 
     setAntiLoopSuggestions(null)
@@ -989,6 +1063,38 @@ function MainApp() {
         if (out.toolsStripped) toolsStrippedRef.current = true
 
         if (controller.signal.aborted) break
+
+        // 0a. Empty answer recovery (thinking-only / blank model turns)
+        const answerEmpty =
+          !(out.content || '').trim() ||
+          /^_No answer text|^_Empty model reply|\(empty response\)/i.test((out.content || '').trim())
+        if (answerEmpty && out.toolCalls === 0) {
+          if (emptyAnswerRetries < 2) {
+            emptyAnswerRetries++
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: uid(),
+                role: 'assistant',
+                name: 'status_chip',
+                content: `empty reply · recovering ${emptyAnswerRetries}/2`,
+              },
+            ])
+            working.push({
+              role: 'user',
+              content: buildContinueNudge({
+                goal: text,
+                reason: 'empty-answer recovery',
+                stage: analyzerRef.current.getStage(),
+                lastFailed: lastFailedCommand,
+                directive:
+                  'Previous turn had empty user-visible content. Output a concrete answer or tool_calls now. Do not only reason. Do not reply empty.',
+              }),
+            })
+            round++
+            continue
+          }
+        }
 
         // 0. Auto-continue if hit token length limit mid-stream
         if (out.finishReason === 'length' && isAgent) {
@@ -1827,6 +1933,24 @@ Assistant: ${finalContent}`,
             ? messages[messages.length - 1].id
             : undefined
         }
+        onFollowUp={(prompt) => {
+          if (prompt === '__switch_provider_spark__') {
+            persist({
+              ...settings,
+              provider: 'spark',
+              model: SPARK_PREFER[0],
+            })
+            showToast('Switched to Spark · qwen-abliterated', { type: 'success' })
+            return
+          }
+          if (busy) {
+            stop()
+            setInput(prompt)
+            showToast('Stopped — suggestion loaded in composer', { type: 'info' })
+            return
+          }
+          void sendWithText(prompt)
+        }}
       />
 
       <Composer

@@ -1,9 +1,18 @@
 import React from 'react'
-import type { StoredSettings, ProviderId } from '../lib/providers'
-import { modelLabel, preferFor, isGatedModelId } from '../lib/providers'
+import {
+  modelLabel,
+  preferFor,
+  isGatedModelId,
+  applyAssistMode,
+  getAssistMode,
+  type AssistMode,
+  type StoredSettings,
+  type ProviderId,
+} from '../lib/providers'
 import { ABLITERATION_LEVELS, ABLITERATION_LEVEL_ORDER } from '../lib/abliterationLevel'
 import type { ExecutionTarget } from '../lib/bashShell'
 import type { AntiLoopSuggestion } from '../lib/agentAnalyzer'
+
 
 export interface ComposerProps {
   error: string | null
@@ -76,7 +85,6 @@ export function Composer(props: ComposerProps) {
     setShowModelSearch,
     hideGated,
     setHideGated,
-    autoAblit,
     handleAutoAblitToggle,
     paramsAccordionOpen,
     setParamsAccordionOpen,
@@ -243,64 +251,41 @@ export function Composer(props: ComposerProps) {
                 </div>
 
                 <div className="composer-toggles-strip">
-                  <button
-                    type="button"
-                    className={`composer-toggle-pill ${settings.agentMode ? 'active' : ''}`}
-                    onClick={() => {
-                      const next = !settings.agentMode
-                      persist({ ...settings, agentMode: next })
-                      showToast(`Agent loop ${next ? 'enabled' : 'disabled'}`, { type: 'info' })
-                    }}
-                    disabled={busy}
-                    title="Agent: autonomous bash shell execution and self-healing fix loop"
-                  >
-                    ⚡ Agent
-                  </button>
-
-                  <button
-                    type="button"
-                    className={`composer-toggle-pill ${settings.deepBuild ? 'active deep' : ''}`}
-                    onClick={() => {
-                      const next = !settings.deepBuild
-                      persist({ ...settings, deepBuild: next })
-                      showToast(`Deep Reasoning ${next ? 'on' : 'off'}`, { type: 'info' })
-                    }}
-                    disabled={busy}
-                    title="Deep Reasoning — model thinking traces + thorough agent budget"
-                  >
-                    🧠 Deep Reasoning
-                  </button>
-
-                  <button
-                    type="button"
-                    className={`composer-toggle-pill ${settings.clusterRag !== false ? 'active' : ''}`}
-                    onClick={() => {
-                      const next = settings.clusterRag === false
-                      persist({ ...settings, clusterRag: next })
-                      showToast(`RAG ${next ? 'enabled' : 'disabled'}`, { type: 'info' })
-                    }}
-                    disabled={busy}
-                    title="On-Device Cluster Ground Truth RAG"
-                  >
-                    📚 RAG
-                  </button>
-
-                  <button
-                    type="button"
-                    className={`composer-toggle-pill ${autoAblit ? 'active' : ''}`}
-                    onClick={() => handleAutoAblitToggle(!autoAblit)}
-                    title="Automatically run bash commands emitted by the assistant"
-                  >
-                    ⚡ Auto
-                  </button>
+                  <div className="assist-mode-seg" role="group" aria-label="Assist mode">
+                    {([
+                      { id: 'chat' as const, label: 'Chat', title: 'Normal chat — no autonomous tool loop' },
+                      { id: 'agent' as const, label: 'Agent', title: 'Autonomous tools, bash, self-heal' },
+                      { id: 'deep' as const, label: 'Deep', title: 'Agent + thinking traces + larger budget' },
+                    ]).map((m) => {
+                      const active = getAssistMode(settings) === m.id
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          className={`assist-mode-btn ${active ? 'active' : ''} ${m.id === 'deep' && active ? 'deep' : ''}`}
+                          disabled={busy}
+                          title={m.title}
+                          onClick={() => {
+                            const next = applyAssistMode(settings, m.id)
+                            persist(next)
+                            handleAutoAblitToggle(m.id !== 'chat')
+                            const labels = { chat: 'Chat', agent: 'Agent', deep: 'Deep' } as const
+                            showToast(`Mode: ${labels[m.id]}`, { type: 'info' })
+                          }}
+                        >
+                          {m.label}
+                        </button>
+                      )
+                    })}
+                  </div>
 
                   <button
                     type="button"
                     className={`composer-params-toggle-btn ${paramsAccordionOpen ? 'active' : ''}`}
                     onClick={() => setParamsAccordionOpen(!paramsAccordionOpen)}
-                    title="Expand Hyperparameters & Telemetry Accordion"
+                    title="Temperature & token params"
                   >
-                    <span>⚙ PARAMS</span>
+                    <span>⚙</span>
                     <span style={{ fontSize: 9.5, opacity: 0.85 }}>T:{settings.temperature ?? 0.7}</span>
                     <span className={`fui-chevron ${paramsAccordionOpen ? 'open' : ''}`}>▾</span>
                   </button>
@@ -524,16 +509,19 @@ export function Composer(props: ComposerProps) {
                     </button>
                     <button
                       type="button"
-                      className={`composer-tool-btn composer-agent-quick ${settings.agentMode ? 'active' : ''}`}
+                      className={`composer-tool-btn composer-agent-quick ${getAssistMode(settings) !== 'chat' ? 'active' : ''}`}
                       onClick={() => {
-                        const next = !settings.agentMode
-                        persist({ ...settings, agentMode: next })
-                        showToast(`Agent ${next ? 'on' : 'off'}`, { type: 'info' })
+                        const cur = getAssistMode(settings)
+                        const order: AssistMode[] = ['chat', 'agent', 'deep']
+                        const next = order[(order.indexOf(cur) + 1) % order.length]
+                        persist(applyAssistMode(settings, next))
+                        handleAutoAblitToggle(next !== 'chat')
+                        showToast(`Mode: ${next === 'chat' ? 'Chat' : next === 'agent' ? 'Agent' : 'Deep'}`, { type: 'info' })
                       }}
                       disabled={busy}
-                      title="Agent mode"
+                      title="Cycle Chat → Agent → Deep"
                     >
-                      Agent
+                      {getAssistMode(settings) === 'chat' ? 'Chat' : getAssistMode(settings) === 'agent' ? 'Agent' : 'Deep'}
                     </button>
                     <button
                       type="button"

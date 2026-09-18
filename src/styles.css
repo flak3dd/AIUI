@@ -5871,3 +5871,97 @@ header {
 .anti-loop-chip:active {
   transform: translateY(0);
 }
+
+
+.status-chip-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 10px;
+}
+.status-chip-row {
+  display: flex;
+  justify-content: center;
+}
+.status-chip {
+  font-size: 10.5px;
+  font-family: var(--font-mono);
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--dracula-comment);
+}
+.response-followups-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+}
+.response-followup-chip {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  padding: 4px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  background: rgba(139, 92, 246, 0.12);
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  color: #ddd6fe;
+}
+.response-followup-chip:hover {
+  background: rgba(139, 92, 246, 0.22);
+  color: #fff;
+}
+
+
+/* Assist mode: Chat | Agent | Deep */
+.assist-mode-seg {
+  display: inline-flex;
+  align-items: stretch;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.25);
+}
+.assist-mode-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--dracula-comment);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 12px;
+  cursor: pointer;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.assist-mode-btn:last-child {
+  border-right: none;
+}
+.assist-mode-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+  color: #e4e4e7;
+}
+.assist-mode-btn.active {
+  background: rgba(139, 92, 246, 0.28);
+  color: #ede9fe;
+}
+.assist-mode-btn.active.deep {
+  background: rgba(34, 211, 238, 0.22);
+  color: #a5f3fc;
+}
+.assist-mode-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.settings-assist-mode {
+  display: flex;
+  width: 100%;
+  margin-top: 6px;
+}
+.settings-assist-mode .assist-mode-btn {
+  flex: 1;
+  padding: 8px 10px;
+}

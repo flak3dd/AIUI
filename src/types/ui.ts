@@ -1,6 +1,8 @@
 import type { BashExecResult } from '../lib/bashShell'
 import type { ToolCall } from '../lib/api'
 
+export type UiFollowUp = { id: string; label: string; prompt: string }
+
 export type UiMessage = {
   id: string
   role: 'user' | 'assistant' | 'tool'
@@ -11,8 +13,12 @@ export type UiMessage = {
   ragCitations?: string[]
   /** tool_call_id for role:'tool' messages — required by strict OpenAI-compatible APIs */
   tool_call_id?: string
-  /** tool function name for role:'tool' messages */
+  /** tool function name; also `status_chip` for quiet system notices */
   name?: string
   /** tool_calls emitted by an assistant turn — needed to reconstruct valid multi-turn history */
   tool_calls?: ToolCall[]
+  /** End-of-response / status-chip suggestion buttons */
+  followUps?: UiFollowUp[]
+  /** Compact actions line when files/scaffolds were written */
+  actionsOverview?: string
 }

@@ -20,10 +20,10 @@ console.log('ssh github:\n', run('ssh -T -o StrictHostKeyChecking=no git@github.
 console.log('gh repo list:\n', run('gh repo list --limit 10'));
 
 console.log('\n=== CHECK SPECIFIC GITHUB REPOS ===');
-for (const repo of ['flak3dd/AIUI', 'flak3dd/aiui', 'flak3dd/rego-ppsr-dashboard', 'flak3dd/r', 'flak3dd/web-api-app']) {
+for (const repo of ['flak3dd/AIUI', 'flak3dd/AIUIRO-216', 'flak3dd/aiui', 'flak3dd/rego-ppsr-dashboard', 'flak3dd/r', 'flak3dd/web-api-app']) {
   console.log(`Checking ${repo}:`, run(`gh repo view ${repo} --json name,url,isPrivate`));
 }
-for (const dir of ['/Users/adminuser/AIUI', '/Users/adminuser/r', '/Users/adminuser/abliterated_ui']) {
+for (const dir of ['/Users/adminuser/AIUI', '/Users/adminuser/AIUIRO-216', '/Users/adminuser/r', '/Users/adminuser/abliterated_ui']) {
   console.log(`\n--- ${dir} ---`);
   if (!fs.existsSync(path.join(dir, '.git'))) {
     console.log('No .git directory');

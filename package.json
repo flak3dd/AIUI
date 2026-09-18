@@ -21,7 +21,16 @@
     "git:push": "node ./scripts/git-sync.mjs",
     "scaffolds:check": "node ./scripts/compare-scaffolds.mjs",
     "scaffolds:verify": "node ./scripts/write-scaffolds.mjs",
-    "env:list": "node ./scripts/list-env-values.mjs"
+    "env:list": "node ./scripts/list-env-values.mjs",
+    "aiuiro:inspect": "node ./scripts/inspect-aiuiro.mjs",
+    "aiuiro:push": "node ./scripts/push-aiuiro.mjs",
+    "feather:test": "node ./scripts/test-featherless.mjs",
+    "feather:deploy": "node ./scripts/deploy-featherless-healing.mjs",
+    "feather:enhance": "node ./scripts/enhance-and-deploy.mjs",
+    "aiuiro:push:all": "node ./scripts/push-all-aiuiro.mjs",
+    "git:inspect:all": "node ./scripts/inspect-all-git-status.mjs",
+    "git:push:all": "node ./scripts/push-all-repos.mjs",
+    "git:sync:push": "node ./scripts/sync-and-push.mjs"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.14.13",

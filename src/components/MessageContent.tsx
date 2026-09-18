@@ -29,7 +29,7 @@ export function MessageContent({
   onRunCode,
   onAutoHeal,
 }: MessageContentProps) {
-  if (!content) return null
+  if (!content && !(reasoning?.trim())) return null
 
   const thinkRegex = /<think>([\s\S]*?)(?:<\/think>|$)/gi
   const thinkBlocks: string[] = []

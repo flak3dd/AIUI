@@ -22,6 +22,7 @@ export interface ChatStageProps {
   onRunCode: (cellKey: string, code: string) => void
   onAutoHeal: (code: string, errorText: string) => void
   onCopyMessage: (id: string, content: string) => void
+  onFollowUp?: (prompt: string) => void
   scrollToken?: number
   streamingMessageId?: string
 }
@@ -31,6 +32,7 @@ const VIRTUALIZE_AFTER = 40
 type ChatItem =
   | { type: 'message'; message: UiMessage }
   | { type: 'tool_group'; id: string; messages: UiMessage[] }
+  | { type: 'status_chip'; message: UiMessage }
 
 export function ChatStage({
   messages,
@@ -48,6 +50,7 @@ export function ChatStage({
   onRunCode,
   onAutoHeal,
   onCopyMessage,
+  onFollowUp,
   scrollToken = 0,
   streamingMessageId,
 }: ChatStageProps) {
@@ -73,6 +76,9 @@ export function ChatStage({
     for (const m of messages) {
       if (m.role === 'tool') {
         currentToolGroup.push(m)
+      } else if (m.name === 'status_chip') {
+        flushToolGroup()
+        items.push({ type: 'status_chip', message: m })
       } else {
         flushToolGroup()
         items.push({ type: 'message', message: m })
@@ -203,18 +209,39 @@ export function ChatStage({
 
           {!useVirtual && (
             <>
-              {chatItems.map((item) =>
-                item.type === 'tool_group' ? (
-                  <AgentBashWorkingsSection
-                    key={item.id}
-                    messages={item.messages}
-                    copiedCellKey={copiedCellKey}
-                    onCopyCode={onCopyCode}
-                  />
-                ) : (
-                  renderBubble(item.message)
-                ),
-              )}
+              {chatItems.map((item) => (
+                <div key={item.type === 'message' ? item.message.id : item.type === 'tool_group' ? item.id : item.message.id}>
+                  {item.type === 'tool_group' ? (
+                    <AgentBashWorkingsSection
+                      messages={item.messages}
+                      copiedCellKey={copiedCellKey}
+                      onCopyCode={onCopyCode}
+                    />
+                  ) : item.type === 'status_chip' ? (
+                    <div className="status-chip-block">
+                      <div className="status-chip-row" role="status">
+                        <span className="status-chip">{item.message.content.replace(/^⚡\s*/, '')}</span>
+                      </div>
+                      {item.message.followUps && item.message.followUps.length > 0 && (
+                        <div className="response-followups-row">
+                          {item.message.followUps.map((s) => (
+                            <button
+                              key={s.id}
+                              type="button"
+                              className="response-followup-chip"
+                              onClick={() => onFollowUp?.(s.prompt)}
+                            >
+                              {s.label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    renderBubble(item.message)
+                  )}
+                </div>
+              ))}
               <div ref={bottomRef} />
             </>
           )}
@@ -247,6 +274,26 @@ export function ChatStage({
                         copiedCellKey={copiedCellKey}
                         onCopyCode={onCopyCode}
                       />
+                    ) : item.type === 'status_chip' ? (
+                      <div className="status-chip-block">
+                        <div className="status-chip-row" role="status">
+                          <span className="status-chip">{item.message.content.replace(/^⚡\s*/, '')}</span>
+                        </div>
+                        {item.message.followUps && item.message.followUps.length > 0 && (
+                          <div className="response-followups-row">
+                            {item.message.followUps.map((s) => (
+                              <button
+                                key={s.id}
+                                type="button"
+                                className="response-followup-chip"
+                                onClick={() => onFollowUp?.(s.prompt)}
+                              >
+                                {s.label}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     ) : (
                       renderBubble(item.message)
                     )}

@@ -286,9 +286,37 @@ export function activeProvider(s: StoredSettings): ProviderConfig {
   }
 }
 
-/** Native OpenAI tool_calls / tool_choice — Spark vLLM only (needs --enable-auto-tool-choice). */
+
+/** Composer assist intensity — replaces separate Agent / Deep / Auto toggles. */
+export type AssistMode = 'chat' | 'agent' | 'deep'
+
+export function getAssistMode(s: Pick<StoredSettings, 'agentMode' | 'deepBuild'>): AssistMode {
+  if (s.agentMode && s.deepBuild) return 'deep'
+  if (s.agentMode) return 'agent'
+  return 'chat'
+}
+
+/** Apply a single assist mode. RAG stays independent (default on). Auto-bash follows agent/deep. */
+export function applyAssistMode(
+  s: StoredSettings,
+  mode: AssistMode,
+): StoredSettings {
+  if (mode === 'chat') {
+    return { ...s, agentMode: false, deepBuild: false }
+  }
+  if (mode === 'agent') {
+    return { ...s, agentMode: true, deepBuild: false }
+  }
+  return { ...s, agentMode: true, deepBuild: true }
+}
+
+/**
+ * Native OpenAI tool_calls / tool_choice.
+ * Spark vLLM needs --enable-auto-tool-choice; Featherless/Abliteration are
+ * OpenAI-compatible — try native tools, streamChat falls back if rejected.
+ */
 export function providerSupportsNativeTools(provider: ProviderId): boolean {
-  return provider === 'spark'
+  return provider === 'spark' || provider === 'featherless' || provider === 'abliteration'
 }
 
 export function preferFor(provider: ProviderId): string[] {

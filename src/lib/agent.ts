@@ -906,7 +906,8 @@ Enterprise-grade thoroughness is required:
 1. Plan boundaries, contracts, edge cases, and failure modes before writing.
 2. Zero stubs/TODOs — complete implementations with validation, types, and logging.
 3. Write and run automated tests; verify exit codes / HTTP status / real output.
-4. End with an evidence-based summary of files changed and verified invariants.`
+4. End with an evidence-based summary of files changed and verified invariants.
+5. Thinking/reasoning alone is not a reply — always emit user-visible content or tool_calls.`
 
 export function buildTurnContextBlock(opts: {
   goal: string

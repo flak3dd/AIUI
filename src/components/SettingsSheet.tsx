@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { StoredSettings, RainMode, LaserMode } from '../lib/providers'
+import { applyAssistMode, getAssistMode, type AssistMode } from '../lib/providers'
 import { ABLITERATION_LEVELS, ABLITERATION_LEVEL_ORDER } from '../lib/abliterationLevel'
 import type { MemPalaceStatus } from '../lib/mempalace'
 import type { SandboxStatus } from '../lib/bashShell'
@@ -197,15 +198,25 @@ export function SettingsSheet({
           {tab === 'agent' && (
             <>
               <div className="field">
-                <label className="chip clickable" style={{ display: 'inline-flex', gap: 6 }}>
-                  <input
-                    type="checkbox"
-                    checked={Boolean(settings.deepBuild)}
-                    onChange={(e) => persist({ ...settings, deepBuild: e.target.checked })}
-                  />
-                  Deep Reasoning
-                </label>
-                <span className="hint">Request model thinking traces (ThoughtTrail) and use a larger agent budget when Agent mode is on.</span>
+                <label>Assist mode</label>
+                <div className="assist-mode-seg settings-assist-mode" role="group" aria-label="Assist mode">
+                  {([
+                    { id: 'chat' as AssistMode, label: 'Chat', hint: 'Replies only' },
+                    { id: 'agent' as AssistMode, label: 'Agent', hint: 'Tools + bash loop' },
+                    { id: 'deep' as AssistMode, label: 'Deep', hint: 'Agent + thinking + budget' },
+                  ]).map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      className={`assist-mode-btn ${getAssistMode(settings) === m.id ? 'active' : ''} ${m.id === 'deep' && getAssistMode(settings) === 'deep' ? 'deep' : ''}`}
+                      title={m.hint}
+                      onClick={() => persist(applyAssistMode(settings, m.id))}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+                <span className="hint">One control instead of Agent / Deep / Auto. Deep adds thinking traces and a larger round budget.</span>
               </div>
               <div className="field">
                 <label className="chip clickable" style={{ display: 'inline-flex', gap: 6 }}>
@@ -214,8 +225,9 @@ export function SettingsSheet({
                     checked={settings.clusterRag !== false}
                     onChange={(e) => persist({ ...settings, clusterRag: e.target.checked })}
                   />
-                  On-device RAG
+                  Local knowledge (RAG)
                 </label>
+                <span className="hint">Optional ground-truth snippets for knowledge-shaped questions. Default on; rarely needs toggling.</span>
               </div>
               <div className="field">
                 <label>Active Workspace Directory</label>
