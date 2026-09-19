@@ -1,0 +1,17 @@
+[Unit]
+Description=Spark sandbox-runner (AIUI/dev workspaces)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/abliterated_ui
+Environment=SANDBOX_PORT=17330
+Environment=SANDBOX_HOST=0.0.0.0
+Environment=SANDBOX_BASE=/tmp/spark-sandboxes
+ExecStart=/usr/bin/node %h/abliterated_ui/scripts/sandbox-runner.mjs
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

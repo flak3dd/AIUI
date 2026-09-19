@@ -35,8 +35,8 @@ export const AGENT_TOOLS = [
           },
           target: {
             type: 'string',
-            enum: ['local_mac', 'dgx_spark', 'container'],
-            description: 'Execution target: local_mac, dgx_spark, or container (isolated Linux pod)',
+            enum: ['dgx_spark', 'container'],
+            description: 'Execution target: dgx_spark (default DGX GPU sandbox) or container (isolated Linux pod)',
           },
         },
         required: ['command'],
@@ -49,7 +49,7 @@ export const AGENT_TOOLS = [
     function: {
       name: 'write_file',
       description:
-        'Write or overwrite a file in the workspace/sandbox. Essential for creating scripts, writing tests, or applying code fixes during self-healing.',
+        'Write or overwrite a file in the DGX Spark sandbox. Essential for creating scripts, writing tests, or applying code fixes during self-healing.',
       parameters: {
         type: 'object',
         properties: {
@@ -63,8 +63,8 @@ export const AGENT_TOOLS = [
           },
           target: {
             type: 'string',
-            enum: ['local_mac', 'dgx_spark'],
-            description: 'Execution target: local_mac (default) or dgx_spark',
+            enum: ['dgx_spark', 'container'],
+            description: 'Execution target: dgx_spark (default remote DGX sandbox) or container',
           },
         },
         required: ['path', 'content'],
@@ -77,7 +77,7 @@ export const AGENT_TOOLS = [
     function: {
       name: 'read_file',
       description:
-        'Read the contents of a file in the workspace/sandbox. Use to inspect existing code, verify edits, or read error logs.',
+        'Read the contents of a file in the DGX Spark sandbox. Use to inspect existing code, verify edits, or read error logs.',
       parameters: {
         type: 'object',
         properties: {
@@ -87,8 +87,8 @@ export const AGENT_TOOLS = [
           },
           target: {
             type: 'string',
-            enum: ['local_mac', 'dgx_spark'],
-            description: 'Execution target: local_mac (default) or dgx_spark',
+            enum: ['dgx_spark', 'container'],
+            description: 'Execution target: dgx_spark (default remote DGX sandbox) or container',
           },
         },
         required: ['path'],

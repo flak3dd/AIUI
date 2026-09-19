@@ -72,20 +72,20 @@ const STORAGE_AUTO_EXEC_KEY = 'abliterated_auto_bash_enabled';
 const STORAGE_SANDBOX_URL_KEY = 'abliterated_sandbox_url';
 const STORAGE_WORKSPACE_DIR_KEY = 'abliterated_workspace_dir';
 
-export function getStoredWorkspaceDir(target: ExecutionTarget = getStoredTarget()): string {
+export function getStoredWorkspaceDir(_target: ExecutionTarget = getStoredTarget()): string {
   try {
     const val = localStorage.getItem(STORAGE_WORKSPACE_DIR_KEY);
-    if (val && val.trim()) return val.trim();
+    if (val && val.trim() && !val.includes('/Users/adminuser')) return val.trim();
   } catch {
     /* ignore */
   }
-  return target === 'dgx_spark' ? '/mnt/nvme/ocr_pipeline/workspaces' : '/Users/adminuser/AIUI';
+  return '/tmp/spark-sandboxes';
 }
 
 export function setStoredWorkspaceDir(dir: string) {
   try {
     const trimmed = (dir || '').trim();
-    if (trimmed) {
+    if (trimmed && !trimmed.includes('/Users/adminuser')) {
       localStorage.setItem(STORAGE_WORKSPACE_DIR_KEY, trimmed);
     } else {
       localStorage.removeItem(STORAGE_WORKSPACE_DIR_KEY);
@@ -98,16 +98,17 @@ export function setStoredWorkspaceDir(dir: string) {
 export function getStoredTarget(): ExecutionTarget {
   try {
     const val = localStorage.getItem(STORAGE_TARGET_KEY);
-    if (val === 'dgx_spark' || val === 'container') return val;
-    return 'local_mac';
+    if (val === 'container') return 'container';
+    return 'dgx_spark';
   } catch {
-    return 'local_mac';
+    return 'dgx_spark';
   }
 }
 
 export function setStoredTarget(target: ExecutionTarget) {
   try {
-    localStorage.setItem(STORAGE_TARGET_KEY, target);
+    const safeTarget = target === 'local_mac' ? 'dgx_spark' : target;
+    localStorage.setItem(STORAGE_TARGET_KEY, safeTarget);
   } catch {
     /* ignore */
   }
@@ -219,7 +220,9 @@ export async function executeBashCommand(
     };
   }
 
-  const workingDir = cwd || getStoredWorkspaceDir(target);
+  // Enforce zero host execution: All workspace execution runs strictly on DGX Spark sandbox
+  const safeTarget: ExecutionTarget = target === 'local_mac' ? 'dgx_spark' : target;
+  const workingDir = cwd || getStoredWorkspaceDir(safeTarget);
 
   try {
     const res = await fetch(`${baseUrl}/api/sandbox/exec`, {
@@ -228,7 +231,7 @@ export async function executeBashCommand(
       body: JSON.stringify({
         envId,
         cmd: trimmed,
-        target,
+        target: safeTarget,
         cwd: workingDir,
       }),
       signal: AbortSignal.timeout(60000),

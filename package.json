@@ -14,6 +14,10 @@
     "monitor:agent": "node ./scripts/monitor-agent-responses.mjs",
     "monitor:agent:probe": "node ./scripts/monitor-agent-responses.mjs --probe",
     "monitor:agent:tail": "node ./scripts/monitor-agent-responses.mjs --tail",
+    "monitor:self-awareness": "node ./scripts/sys-self-improvement-monitor.mjs",
+    "test:effectiveness": "node ./scripts/test-effectiveness-over-time.mjs",
+    "ship": "bash ./scripts/ship-to-dgx.sh",
+    "runtime:deploy": "bash ./scripts/dgx-runtime/install-dgx-runtime.sh",
     "spark:restart": "node ./scripts/restart-spark.mjs",
     "spark:status": "node ./scripts/restart-spark.mjs --status",
     "sys:summary": "node ./scripts/sys-summary.mjs",
@@ -30,7 +34,9 @@
     "aiuiro:push:all": "node ./scripts/push-all-aiuiro.mjs",
     "git:inspect:all": "node ./scripts/inspect-all-git-status.mjs",
     "git:push:all": "node ./scripts/push-all-repos.mjs",
-    "git:sync:push": "node ./scripts/sync-and-push.mjs"
+    "git:sync:push": "node ./scripts/sync-and-push.mjs",
+    "monitor:optimize": "node ./scripts/chat-response-optimizer.mjs",
+    "monitor:optimize:policy": "curl -s http://127.0.0.1:17337/api/policy | python3 -m json.tool"
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.14.13",
