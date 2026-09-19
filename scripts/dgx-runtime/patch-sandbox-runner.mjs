@@ -18,7 +18,7 @@ if (!content.includes('sandbox-workspaces.mjs')) {
 }
 
 // 2. Add routes before 404 handler
-const routesHook = "// 404 Catch-All";
+const routesHook = "return sendJson(res, 404, { ok: false, error: 'Not Found' });";
 const newRoutes = `
     // --- WORKSPACE & GIT SYNC ROUTES ---
     if (pathname === '/api/sandbox/workspace' && req.method === 'POST') {
