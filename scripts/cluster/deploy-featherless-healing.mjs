@@ -29,12 +29,9 @@ except ImportError:
     print("Error: requests library not installed. Run: pip install requests")
     sys.exit(1)
 
-DEFAULT_API_KEY = os.environ.get(
-    "FEATHERLESS_API_KEY",
-    "rc_a939625b5ebea3e527e07ee81d1d3ac10a77be72203eed6e53c3a81f4174a86a"
-)
+DEFAULT_API_KEY = os.environ.get("FEATHERLESS_API_KEY") or ""
 DEFAULT_BASE_URL = os.environ.get("FEATHERLESS_BASE_URL", "https://api.featherless.ai/v1")
-DEFAULT_MODEL = os.environ.get("FEATHERLESS_MODEL", "Qwen/Qwen2.5-7B-Instruct")
+DEFAULT_MODEL = os.environ.get("FEATHERLESS_MODEL", "Qwen/Qwen2.5-Coder-32B-Instruct")
 
 
 class FeatherlessSelfHealer:
@@ -439,7 +436,7 @@ const cronJobSh = `#!/usr/bin/env bash
 set -e
 
 DIR="$(cd -P "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
-export FEATHERLESS_API_KEY="\${FEATHERLESS_API_KEY:-rc_a939625b5ebea3e527e07ee81d1d3ac10a77be72203eed6e53c3a81f4174a86a}"
+: "\${FEATHERLESS_API_KEY:?FEATHERLESS_API_KEY must be set}"
 
 echo "=== [$(date '+%Y-%m-%d %H:%M:%S')] Featherless AI Self-Healing Monitor ==="
 python3 "\${DIR}/error_checker.py" --heal --dir "\${DIR}"

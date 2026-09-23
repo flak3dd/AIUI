@@ -83,7 +83,7 @@ const defaults = {
   REGO_MAX_PLATES: '0',
   REGO_WORKERS: '5',
   SHELL: process.env.SHELL || '/bin/zsh',
-  SPARK_HOST: '192.168.4.103',
+  SPARK_HOST: '100.66.147.53',
   SPARK_SSH_ALIAS: 'flak3dd',
 };
 

@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useRef } from 'react'
 import {
   modelLabel,
   preferFor,
@@ -120,6 +120,14 @@ export function Composer(props: ComposerProps) {
     onSendPrompt,
   } = props
 
+  const fieldRef = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    const el = fieldRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`
+  }, [input])
+
   return (
     <div className="composer">
       {error && <div className="error">{error}</div>}
@@ -193,12 +201,13 @@ export function Composer(props: ComposerProps) {
               )}
 
               <textarea
+                ref={fieldRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="What should happen?"
                 disabled={busy && !settings.agentMode}
                 className="composer-textarea"
-                rows={3}
+                rows={1}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault()

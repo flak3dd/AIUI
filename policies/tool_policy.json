@@ -1,0 +1,19 @@
+{
+  "wake": ["mempalace_status"],
+  "locus_bind": ["mempalace_list_wings", "mempalace_list_rooms"],
+  "evidence": ["mempalace_search", "mempalace_kg_query", "mempalace_get_drawer"],
+  "pathways": ["mempalace_traverse", "mempalace_find_tunnels", "mempalace_graph_stats"],
+  "temporal": ["mempalace_kg_timeline"],
+  "write": [
+    "mempalace_check_duplicate",
+    "mempalace_add_drawer",
+    "mempalace_kg_add",
+    "mempalace_kg_invalidate",
+    "mempalace_diary_write"
+  ],
+  "defaults": {
+    "max_hops": 2,
+    "tool_rounds": 8,
+    "reflection_cycles": 1
+  }
+}

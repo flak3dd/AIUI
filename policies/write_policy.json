@@ -1,0 +1,18 @@
+{
+  "layers": ["drawer", "kg_triple", "diary"],
+  "write_if_all": [
+    "preference_identity_decision_or_durable_project_state",
+    "not_secret_credential_or_jailbreak_artifact",
+    "not_duplicate",
+    "wing_room_and_hall_named"
+  ],
+  "do_not_write": [
+    "ephemeral_task_state",
+    "world_knowledge_copied_from_the_web",
+    "hypotheticals_jokes_or_roleplay_as_biography",
+    "raw_tool_spam"
+  ],
+  "on_reversal": "kg_invalidate_old_triple_then_new_drawer_and_triple",
+  "on_forget": "delete_or_invalidate_no_shadow_copy",
+  "failure_must_not_block_response": true
+}

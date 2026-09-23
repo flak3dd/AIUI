@@ -1,0 +1,239 @@
+#!/usr/bin/env bash
+# ==============================================================================
+#  ⚡ AIUI TERMINAL RUNNER & COMMAND-LINE INTERFACE
+#  Sovereign Autonomous Agent, Cluster Telemetry & Matrix Visualizer
+# ==============================================================================
+set -e
+
+# Resolve physical script directory across any symlinks
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+for candidate in "$SCRIPT_DIR" "$AIUI_HOME" "$SCRIPT_DIR/.." "${HOME}/AIUI" "${HOME}/.aiui"; do
+  if [[ -n "$candidate" && "$candidate" != "$HOME" && "$candidate" != "/Users/adminuser" && -f "$candidate/scripts/aiui-agent.mjs" && -f "$candidate/scripts/restart-spark.mjs" ]]; then
+    export AIUI_HOME="$candidate"
+    break
+  fi
+done
+if [[ -z "$AIUI_HOME" || "$AIUI_HOME" == "$HOME" || "$AIUI_HOME" == "/Users/adminuser" || ! -f "$AIUI_HOME/scripts/aiui-agent.mjs" ]]; then
+  for candidate in "$SCRIPT_DIR" "${HOME}/AIUI" "${HOME}/.aiui"; do
+    if [[ -n "$candidate" && -f "$candidate/scripts/aiui-agent.mjs" ]]; then
+      export AIUI_HOME="$candidate"
+      break
+    fi
+  done
+fi
+export DEFAULT_WORKSPACE="${DEFAULT_WORKSPACE:-$(pwd)}"
+AIUI_AGENT_SCRIPT="$AIUI_HOME/scripts/aiui-agent.mjs"
+MATRIX_SCRIPT="$AIUI_HOME/scripts/matrix.sh"
+STACK_SCRIPT="$AIUI_HOME/start-stack.sh"
+SPARK_SCRIPT="$AIUI_HOME/scripts/restart-spark.mjs"
+if [[ ! -f "$SPARK_SCRIPT" && -f "${HOME}/AIUI/scripts/restart-spark.mjs" ]]; then
+  SPARK_SCRIPT="${HOME}/AIUI/scripts/restart-spark.mjs"
+fi
+
+# Color tokens for bash output (neon purple / lime green theme)
+PURPLE='\033[38;2;190;80;255m'
+LIME='\033[38;2;140;255;60m'
+GOLD='\033[38;2;180;255;90m'
+GREEN='\033[38;2;100;240;80m'
+RED='\033[38;2;240;50;50m'
+MUTED='\033[38;2;160;150;180m'
+DIM='\033[2m'
+BOLD='\033[1m'
+RESET='\033[0m'
+
+# Check node availability
+if ! command -v node >/dev/null 2>&1; then
+  printf "${RED}Error: Node.js is required to run the AIUI Terminal Suite.${RESET}\n" >&2
+  exit 1
+fi
+
+# ------------------------------------------------------------------------------
+# Interactive TUI Menu Mode (Persistent Loop)
+# ------------------------------------------------------------------------------
+show_menu() {
+  while true; do
+    clear
+    printf "\n"
+    printf "${PURPLE}${BOLD}  █████╗ ██╗██╗   ██╗██╗${RESET}  ${LIME}${BOLD}⚡ SOVEREIGN AI CLUSTER AGENT${RESET}\n"
+    printf "${PURPLE}${BOLD} ██╔══██╗██║██║   ██║██║${RESET}  ${MUTED}Autonomous Terminal Controller & Multi-Tool REPL${RESET}\n"
+    printf "${PURPLE}${BOLD} ███████║██║██║   ██║██║${RESET}  ${GOLD}Local Mac & DGX Spark GB10 Mesh${RESET}\n"
+    printf "${PURPLE}${BOLD} ██╔══██║██║██║   ██║██║${RESET}\n"
+    printf "${PURPLE}${BOLD} ██║  ██║██║╚██████╔╝██║${RESET}\n"
+    printf "${PURPLE}${BOLD} ╚═╝  ╚═╝╚═╝ ╚═════╝ ╚═╝${RESET}\n"
+    printf "\n"
+    printf "${PURPLE}╭──────────────────────────────────────────────────────────────────────────╮${RESET}\n"
+    printf "${PURPLE}│${RESET}  ${BOLD}AIUI TERMINAL OPERATIONS SUITE${RESET}                                         ${PURPLE}│${RESET}\n"
+    printf "${PURPLE}├──────────────────────────────────────────────────────────────────────────┤${RESET}\n"
+    printf "${PURPLE}│${RESET}  ${LIME}[1]${RESET} 🤖 ${BOLD}AIUI Autonomous Agent REPL${RESET}      ${DIM}(Interactive chat & 20 tools)${RESET}  ${PURPLE}│${RESET}\n"
+    printf "${PURPLE}│${RESET}  ${LIME}[2]${RESET} 🎯 ${BOLD}Execute One-Shot Prompt${RESET}         ${DIM}(Quick autonomous turn)${RESET}        ${PURPLE}│${RESET}\n"
+    printf "${PURPLE}│${RESET}  ${LIME}[3]${RESET} 🔍 ${BOLD}Audit Git Diff Stat & Hunks${RESET}     ${DIM}(Surgical verification proof)${RESET}  ${PURPLE}│${RESET}\n"
+    printf "${PURPLE}│${RESET}  ${LIME}[4]${RESET} ⚡ ${BOLD}Inspect Background Daemons${RESET}      ${DIM}(Process supervisor lifecycle)${RESET} ${PURPLE}│${RESET}\n"
+    printf "${PURPLE}│${RESET}  ${LIME}[5]${RESET} 🌐 ${BOLD}Headless Browser Inspection${RESET}     ${DIM}(Playwright DOM & error audit)${RESET} ${PURPLE}│${RESET}\n"
+    printf "${PURPLE}│${RESET}  ${LIME}[6]${RESET} 📊 ${BOLD}Ecosystem Telemetry Dashboard${RESET}   ${DIM}(:17330, :17332, :17333, Spark)${RESET} ${PURPLE}│${RESET}\n"
+    printf "${PURPLE}│${RESET}  ${LIME}[7]${RESET} 🌧️ ${BOLD}Cyber Matrix Screensaver${RESET}        ${DIM}(TrueColor Featherless Rain)${RESET}   ${PURPLE}│${RESET}\n"
+    printf "${PURPLE}│${RESET}  ${LIME}[8]${RESET} 🚀 ${BOLD}Inspect / Start Backend Stack${RESET}   ${DIM}(Sandbox runner & MemPalace)${RESET}   ${PURPLE}│${RESET}\n"
+    printf "${PURPLE}│${RESET}  ${LIME}[9]${RESET} ⚡ ${BOLD}DGX Spark GPU & vLLM Status${RESET}     ${DIM}(Port 8000 & 83GB VRAM)${RESET}        ${PURPLE}│${RESET}\n"
+    printf "${PURPLE}│${RESET}  ${LIME}[10]${RESET} 🛠️ ${BOLD}List Active Agent Tools${RESET}         ${DIM}(20 Devin-grade capabilities)${RESET}  ${PURPLE}│${RESET}\n"
+    printf "${PURPLE}│${RESET}  ${LIME}[11]${RESET} ⚡ ${BOLD}Run System & GPU Optimization${RESET}   ${DIM}(Audit KV, policy & socket cache)${RESET}${PURPLE}│${RESET}\n"
+    printf "${PURPLE}│${RESET}  ${LIME}[12]${RESET} 🎨 ${BOLD}Launch REPL with Custom Skin${RESET}    ${DIM}(Cyberpunk/Matrix/Ember/Nord)${RESET}  ${PURPLE}│${RESET}\n"
+    printf "${PURPLE}│${RESET}  ${LIME}[13]${RESET} 📡 ${BOLD}Live Agent Traffic Monitor${RESET}    ${DIM}(SSE stream, tool trace & logs)${RESET} ${PURPLE}│${RESET}\n"
+    printf "${PURPLE}│${RESET}  ${LIME}[14]${RESET} 🚪 ${BOLD}Exit${RESET}                                                             ${PURPLE}│${RESET}\n"
+    printf "${PURPLE}╰──────────────────────────────────────────────────────────────────────────╯${RESET}\n"
+    printf "\n"
+
+    printf "${GOLD}${BOLD}Select option [1-14]: ${RESET}"
+    read -r choice
+    case "$choice" in
+      1)
+        exec node "$AIUI_AGENT_SCRIPT"
+        ;;
+      2)
+        printf "\n${LIME}Enter task prompt for AIUI Agent:${RESET} "
+        read -r user_prompt
+        if [[ -n "$user_prompt" ]]; then
+          exec node "$AIUI_AGENT_SCRIPT" -p "$user_prompt"
+        fi
+        ;;
+      3)
+        node "$AIUI_AGENT_SCRIPT" diff || true
+        printf "\n${MUTED}Press Enter to return to menu...${RESET}"
+        read -r
+        ;;
+      4)
+        node "$AIUI_AGENT_SCRIPT" daemons || true
+        printf "\n${MUTED}Press Enter to return to menu...${RESET}"
+        read -r
+        ;;
+      5)
+        printf "\n${LIME}Enter target URL (default: http://localhost:5173):${RESET} "
+        read -r target_url
+        node "$AIUI_AGENT_SCRIPT" browser "${target_url:-http://localhost:5173}" || true
+        printf "\n${MUTED}Press Enter to return to menu...${RESET}"
+        read -r
+        ;;
+      6)
+        node "$AIUI_AGENT_SCRIPT" status || true
+        printf "\n${MUTED}Press Enter to return to menu...${RESET}"
+        read -r
+        ;;
+      7)
+        exec bash "$MATRIX_SCRIPT"
+        ;;
+      8)
+        if [[ -f "$STACK_SCRIPT" ]]; then
+          bash "$STACK_SCRIPT" status || true
+        else
+          node "$AIUI_AGENT_SCRIPT" status || true
+        fi
+        printf "\n${MUTED}Press Enter to return to menu...${RESET}"
+        read -r
+        ;;
+      9)
+        if [[ -f "$SPARK_SCRIPT" ]]; then
+          node "$SPARK_SCRIPT" --status || true
+        else
+          printf "${RED}Spark script not found.${RESET}\n"
+        fi
+        printf "\n${MUTED}Press Enter to return to menu...${RESET}"
+        read -r
+        ;;
+      10)
+        node "$AIUI_AGENT_SCRIPT" tools || true
+        printf "\n${MUTED}Press Enter to return to menu...${RESET}"
+        read -r
+        ;;
+      11|opt|optimize|optimise)
+        node "$AIUI_AGENT_SCRIPT" optimize || true
+        printf "\n${MUTED}Press Enter to return to menu...${RESET}"
+        read -r
+        ;;
+      12)
+        printf "\n${LIME}Choose skin (cyberpunk / matrix / ember / nord / synthwave):${RESET} "
+        read -r skin_name
+        if [[ -n "$skin_name" ]]; then
+          exec node "$AIUI_AGENT_SCRIPT" --skin "$skin_name"
+        else
+          exec node "$AIUI_AGENT_SCRIPT"
+        fi
+        ;;
+      13|monitor|traffic)
+        node "$AIUI_AGENT_SCRIPT" monitor || true
+        printf "\n${MUTED}Press Enter to return to menu...${RESET}"
+        read -r
+        ;;
+      14|q|Q|exit)
+        printf "${GREEN}👋 Exiting AIUI Terminal.${RESET}\n"
+        exit 0
+        ;;
+      *)
+        printf "${RED}Invalid selection.${RESET}\n"
+        sleep 1
+        ;;
+    esac
+  done
+}
+
+# ------------------------------------------------------------------------------
+# Dispatch Subcommands
+# ------------------------------------------------------------------------------
+case "${1:-}" in
+  menu|--menu|-m)
+    show_menu
+    ;;
+  diff)
+    exec node "$AIUI_AGENT_SCRIPT" diff "${@:2}"
+    ;;
+  connect-repo|init-git)
+    exec node "$AIUI_AGENT_SCRIPT" init-git "${@:2}"
+    ;;
+  daemons)
+    exec node "$AIUI_AGENT_SCRIPT" daemons "${@:2}"
+    ;;
+  browser)
+    exec node "$AIUI_AGENT_SCRIPT" browser "${@:2}"
+    ;;
+  status|--status|-s)
+    exec node "$AIUI_AGENT_SCRIPT" status "${@:2}"
+    ;;
+  spark|--spark)
+    exec node "$AIUI_AGENT_SCRIPT" spark "${@:2}"
+    ;;
+  bench|benchmark|--bench)
+    exec node "$AIUI_AGENT_SCRIPT" bench "${@:2}"
+    ;;
+  tools|--tools)
+    exec node "$AIUI_AGENT_SCRIPT" tools "${@:2}"
+    ;;
+  monitor|traffic|--monitor)
+    exec node "$AIUI_AGENT_SCRIPT" monitor "${@:2}"
+    ;;
+  matrix)
+    exec bash "$MATRIX_SCRIPT" "${@:2}"
+    ;;
+  setup)
+    exec bash "$SCRIPT_DIR/scripts/install/setup-aiui-quickstart.sh"
+    ;;
+  optimize|optimise)
+    exec node "$AIUI_AGENT_SCRIPT" optimize "${@:2}"
+    ;;
+  stack)
+    if [[ -f "$STACK_SCRIPT" ]]; then
+      exec bash "$STACK_SCRIPT" "${@:2}"
+    else
+      exec node "$AIUI_AGENT_SCRIPT" status
+    fi
+    ;;
+  help|--help|-h)
+    exec node "$AIUI_AGENT_SCRIPT" --help "${@:2}"
+    ;;
+  *)
+    # Direct pass-through to the unified node CLI agent
+    exec node "$AIUI_AGENT_SCRIPT" "$@"
+    ;;
+esac

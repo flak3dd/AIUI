@@ -216,6 +216,34 @@ export async function clickSession({ sessionId, selector }) {
   }
 }
 
+export async function textSession({ sessionId, selector }) {
+  const found = requireSession(sessionId)
+  if (found.error) return { ok: false, exitCode: 1, error: found.error }
+  try {
+    const locator = selector ? found.session.page.locator(selector).first() : found.session.page.locator('body')
+    const text = await locator.evaluate((el) => {
+      if (el instanceof HTMLSelectElement) return el.options[el.selectedIndex]?.text || ''
+      return el.innerText || ''
+    })
+    return { ok: true, exitCode: 0, engine: 'playwright-chromium', sessionId: found.session.id, text: String(text || '').slice(0, 2000) }
+  } catch (err) {
+    return { ok: false, exitCode: 1, error: err.message, engine: 'playwright-chromium' }
+  }
+}
+
+export async function selectSession({ sessionId, selector, value }) {
+  const found = requireSession(sessionId)
+  if (found.error) return { ok: false, exitCode: 1, error: found.error }
+  try {
+    await found.session.page.selectOption(selector, String(value), { timeout: 8000 })
+    found.session.steps.push({ action: 'select', ok: true, engine: 'playwright-chromium', selector })
+    return { ok: true, exitCode: 0, engine: 'playwright-chromium', sessionId: found.session.id, value }
+  } catch (err) {
+    found.session.steps.push({ action: 'select', ok: false, engine: 'playwright-chromium', selector, error: err.message })
+    return { ok: false, exitCode: 1, error: err.message, engine: 'playwright-chromium' }
+  }
+}
+
 export async function typeSession({ sessionId, selector, text }) {
   const found = requireSession(sessionId)
   if (found.error) return { ok: false, exitCode: 1, error: found.error }
@@ -316,6 +344,12 @@ export async function dispatchBrowserTool(name, args = {}) {
   }
   if (name === 'browser_type') {
     return typeSession({ sessionId: args.sessionId, selector: args.selector, text: args.text })
+  }
+  if (name === 'browser_text') {
+    return textSession({ sessionId: args.sessionId, selector: args.selector })
+  }
+  if (name === 'browser_select') {
+    return selectSession({ sessionId: args.sessionId, selector: args.selector, value: args.value })
   }
   if (name === 'browser_screenshot' || name === 'browser_console_logs') {
     const found = requireSession(args.sessionId)

@@ -8276,6 +8276,44 @@ header.term-titlebar {
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
+  padding: 6px 8px 6px 14px;
+  gap: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.composer-capsule:focus-within {
+  border-color: rgba(var(--accent-2-rgb), 0.55);
+  box-shadow: none;
+}
+.composer-textarea {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.45;
+  min-height: 36px;
+  max-height: 160px;
+  padding: 8px 2px 2px;
+  overflow-y: auto;
+}
+.composer-bottom-bar {
+  align-items: flex-start;
+  border-top: none;
+  padding-top: 0;
+  gap: 8px;
+}
+.composer-setup > summary {
+  padding: 7px 2px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.composer-send-row {
+  padding-top: 2px;
+}
+.composer-send-btn:disabled,
+.composer-send-btn:disabled:hover {
+  background: var(--surface-3) !important;
+  color: var(--text-dim) !important;
+  cursor: default;
 }
 .composer-actions button.primary,
 button.primary {

@@ -1,0 +1,1 @@
+AIUI is a local chat and CLI agent. MemPalace is its long-term spatial memory. Project wing: wing_agent_design. Rooms: response-workflow, mempalace-integration.
