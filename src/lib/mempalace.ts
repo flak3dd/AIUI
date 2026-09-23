@@ -3,7 +3,7 @@
  * Manages persistent memory storage, MCP bridge communication, and high-performance LRU caching.
  */
 
-import { fetchWithRetry } from './resilientFetch';
+import { fetchWithRetry } from './resilientFetch.ts';
 
 export interface LRUCacheOptions {
   capacity?: number;

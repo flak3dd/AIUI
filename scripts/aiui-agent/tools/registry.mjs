@@ -193,13 +193,28 @@ export const tools = [
   {
     type: 'function',
     function: {
+      name: 'nl_automate',
+      description: 'Run a natural-language web automation command on the allowlisted local studio. Example: "Open the local studio, click Settings, go to the Health tab, and read the endpoint list."',
+      parameters: {
+        type: 'object',
+        properties: {
+          instruction: { type: 'string', description: 'Plain-language browser task' },
+        },
+        required: ['instruction'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'browser_open',
-      description: 'Launch headless browser (Chromium/Playwright) and navigate to local or remote URL. Captures page console logs and runtime exceptions.',
+      description: 'Open a visible Chrome window (Playwright) and navigate to a URL. Captures page console logs and runtime exceptions. Pass headless true only when a window must stay hidden.',
       parameters: {
         type: 'object',
         properties: {
           url: { type: 'string', description: 'URL to navigate to (e.g. http://localhost:5173)' },
-          headless: { type: 'boolean', description: 'Run headless (default: true)' },
+          headless: { type: 'boolean', description: 'Hide the window. Default false, so Chrome is visible.' },
         },
         required: ['url'],
         additionalProperties: false,
@@ -336,6 +351,12 @@ export const tools = [
           dataFormat: { type: 'string', enum: ['markdown', 'raw', 'screenshot'], description: 'Output format (markdown is optimal for LLM comprehension)' },
           render: { type: 'boolean', description: 'Force full headless browser JavaScript rendering (default: true)' },
           country: { type: 'string', description: 'Two-letter ISO country code for geo-targeting (e.g. "us", "gb", "au")' },
+          headers: { type: 'object', description: 'Custom request headers. Requires Custom headers & cookies enabled on the Bright Data zone.', additionalProperties: { type: 'string' } },
+          cookies: { description: 'Cookie header string, name/value object, or [{name,value}]. Same zone toggle as headers.' },
+          async: { type: 'boolean', description: 'Submit in the background and collect by response id. Requires Asynchronous requests enabled on the zone.' },
+          wait: { type: 'boolean', description: 'When async, poll until the result is ready. Set false to return the response id immediately.' },
+          webhookUrl: { type: 'string', description: 'Web Hook URL. Bright Data calls this when an async job finishes.' },
+          webhookMethod: { type: 'string', enum: ['GET', 'POST'], description: 'Web Hook Request Method. GET or POST.' },
         },
         required: ['url'],
         additionalProperties: false,
@@ -361,7 +382,8 @@ export const tools = [
     type: 'function',
     function: {
       name: 'http_get_json',
-      description: 'GET a public http(s) URL and return truncated JSON or text. Not browser proof.',
+      description:
+        'GET a public http(s) URL and return status, finalUrl, truncated body, and body metadata. Uses Bright Data residential SuperProxy when BRIGHTDATA_* env is set; otherwise direct. Not browser proof.',
       parameters: {
         type: 'object',
         properties: { url: { type: 'string' } },

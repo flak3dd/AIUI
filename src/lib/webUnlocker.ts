@@ -39,8 +39,16 @@ export interface WebUnlockerOptions {
   urlFragment?: string;
   /** Custom request headers (requires Custom Headers enabled on zone). */
   headers?: Record<string, string>;
-  /** Custom cookies to pass with the request. */
-  cookies?: string;
+  /** Cookie header string, name/value map, or a list of cookie pairs. */
+  cookies?: string | Record<string, string> | Array<{ name: string; value: string }>;
+  /** Submit via POST /unblocker/req and collect later. Requires the zone async toggle. */
+  async?: boolean;
+  /** When async, poll for the result. False returns the response id immediately. */
+  wait?: boolean;
+  /** Notified by Bright Data when an async job finishes. */
+  webhookUrl?: string;
+  /** Web Hook Request Method shown in the zone settings. */
+  webhookMethod?: "GET" | "POST";
   /** API key override. Defaults to BRIGHTDATA_API_KEY from env. */
   apiKey?: string;
   /** Endpoint override. Defaults to https://api.brightdata.com. */
@@ -61,6 +69,23 @@ export interface WebUnlockerResult {
   reqId?: string;
   captchaSolved?: boolean;
   fields?: Array<{ label: string; selector: string; kind: string; type: string }>;
+}
+
+export function serializeUnlockerCookies(
+  cookies: WebUnlockerOptions["cookies"],
+): string {
+  if (!cookies) return "";
+  if (typeof cookies === "string") return cookies.trim();
+  if (Array.isArray(cookies)) {
+    return cookies
+      .filter((item) => item?.name)
+      .map((item) => `${item.name}=${item.value ?? ""}`)
+      .join("; ");
+  }
+  return Object.entries(cookies)
+    .filter(([, value]) => value != null)
+    .map(([name, value]) => `${name}=${value}`)
+    .join("; ");
 }
 
 export function extractFieldsFromHtml(html: string): Array<{
@@ -193,9 +218,8 @@ export async function unlockPage(
     }
   }
 
-  if (options.cookies) {
-    customHeaders["Cookie"] = options.cookies;
-  }
+  const cookieHeader = serializeUnlockerCookies(options.cookies);
+  if (cookieHeader) customHeaders["Cookie"] = cookieHeader;
 
   const payload: Record<string, unknown> = {
     zone,
@@ -226,6 +250,48 @@ export async function unlockPage(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
+    if (options.async) {
+      const submit = await fetch(`${base}/unblocker/req?zone=${encodeURIComponent(zone)}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          url: targetUrl,
+          headers: Object.keys(customHeaders).length ? customHeaders : undefined,
+          country: options.country ? options.country.toLowerCase() : undefined,
+          webhook_url: options.webhookUrl,
+          webhook_method: options.webhookMethod,
+        }),
+        signal: controller.signal,
+      });
+      const submitted = await submit.json().catch(() => ({} as { response_id?: string }));
+      clearTimeout(timer);
+      const latencyMs = Math.round(performance.now() - t0);
+      if (!submit.ok || !submitted.response_id) {
+        return {
+          ok: false,
+          status: submit.status,
+          error: `Async unlock submit failed HTTP ${submit.status}`,
+          latencyMs,
+          url: targetUrl,
+          zone,
+          dataFormat,
+        };
+      }
+      return {
+        ok: true,
+        status: submit.status,
+        content: submitted.response_id,
+        latencyMs,
+        url: targetUrl,
+        zone,
+        dataFormat,
+        reqId: submitted.response_id,
+      };
+    }
+
     const res = await fetch(`${base}/request`, {
       method: "POST",
       headers: {

@@ -85,6 +85,29 @@ export function extractFieldsFromHtml(html) {
   return fields;
 }
 
+/** Cookie string, `{ name: value }`, or `[{ name, value }]`. */
+export function serializeCookies(cookies) {
+  if (!cookies) return '';
+  if (typeof cookies === 'string') return cookies.trim();
+  if (Array.isArray(cookies)) {
+    return cookies
+      .filter((item) => item && item.name)
+      .map((item) => `${item.name}=${item.value ?? ''}`)
+      .join('; ');
+  }
+  if (typeof cookies === 'object') {
+    return Object.entries(cookies)
+      .filter(([, value]) => value != null)
+      .map(([name, value]) => `${name}=${value}`)
+      .join('; ');
+  }
+  return '';
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * Executes a Web Unlocker request with optional manual expect element/text
  */
@@ -130,9 +153,8 @@ export async function webUnblockerHandler(args = {}, ctx = {}) {
     }
   }
 
-  if (args.cookies) {
-    customHeaders['Cookie'] = args.cookies;
-  }
+  const cookieHeader = serializeCookies(args.cookies);
+  if (cookieHeader) customHeaders.Cookie = cookieHeader;
 
   if (!apiKey) {
     return JSON.stringify({
@@ -159,10 +181,105 @@ export async function webUnblockerHandler(args = {}, ctx = {}) {
   const t0 = performance.now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const endpoint = (process.env.BRIGHTDATA_ENDPOINT || 'https://api.brightdata.com').replace(/\/+$/, '');
+  const authHeaders = {
+    Authorization: `Bearer ${apiKey}`,
+    'Content-Type': 'application/json',
+  };
 
   try {
-    const endpoint = process.env.BRIGHTDATA_ENDPOINT || 'https://api.brightdata.com';
-    const res = await fetch(`${endpoint.replace(/\/+$/, '')}/request`, {
+    if (args.async === true) {
+      const submit = await fetch(`${endpoint}/unblocker/req?zone=${encodeURIComponent(zone)}`, {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({
+          url: targetUrl,
+          headers: Object.keys(customHeaders).length ? customHeaders : undefined,
+          country: country ? country.toLowerCase() : undefined,
+          webhook_url: args.webhookUrl || args.webhook_url,
+          webhook_method: args.webhookMethod || args.webhook_method,
+          webhook_data: args.webhookData || args.webhook_data,
+        }),
+        signal: controller.signal,
+      });
+      const submitted = await submit.json().catch(() => ({}));
+      if (!submit.ok || !submitted.response_id) {
+        clearTimeout(timer);
+        return JSON.stringify({
+          ok: false,
+          status: submit.status,
+          error: `Async unlock submit failed HTTP ${submit.status}`,
+          detail: submitted,
+          latencyMs: Math.round(performance.now() - t0),
+          url: targetUrl,
+          exitCode: 1,
+        });
+      }
+      if (args.wait === false) {
+        clearTimeout(timer);
+        return JSON.stringify({
+          ok: true,
+          async: true,
+          pending: true,
+          responseId: submitted.response_id,
+          url: targetUrl,
+          zone,
+          latencyMs: Math.round(performance.now() - t0),
+          exitCode: 0,
+        });
+      }
+      const gaps = [20000, 10000, 5000, 5000, 5000];
+      for (const gap of gaps) {
+        if (performance.now() - t0 > timeoutMs) break;
+        await sleep(gap);
+        const got = await fetch(`${endpoint}/unblocker/get_result?response_id=${encodeURIComponent(submitted.response_id)}`, {
+          headers: { Authorization: `Bearer ${apiKey}` },
+          signal: controller.signal,
+        });
+        if (got.status === 202) continue;
+        const bodyText = await got.text();
+        clearTimeout(timer);
+        if (!got.ok) {
+          return JSON.stringify({
+            ok: false,
+            status: got.status,
+            error: `Async result HTTP ${got.status}: ${bodyText.slice(0, 300)}`,
+            responseId: submitted.response_id,
+            latencyMs: Math.round(performance.now() - t0),
+            url: targetUrl,
+            exitCode: 1,
+          });
+        }
+        let parsed = null;
+        try { parsed = JSON.parse(bodyText); } catch { parsed = null; }
+        const content = parsed?.body || bodyText;
+        return JSON.stringify({
+          ok: true,
+          async: true,
+          status: parsed?.status_code || got.status,
+          responseId: submitted.response_id,
+          latencyMs: Math.round(performance.now() - t0),
+          url: targetUrl,
+          zone,
+          contentPreview: String(content).slice(0, 1500),
+          contentLength: String(content).length,
+          exitCode: 0,
+        });
+      }
+      clearTimeout(timer);
+      return JSON.stringify({
+        ok: true,
+        async: true,
+        pending: true,
+        responseId: submitted.response_id,
+        error: 'Result not ready before timeout. Collect it with this responseId.',
+        latencyMs: Math.round(performance.now() - t0),
+        url: targetUrl,
+        exitCode: 0,
+      });
+    }
+
+    const res = await fetch(`${endpoint}/request`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,

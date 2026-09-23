@@ -25,6 +25,7 @@ import {
   browserTypeHandler,
   browserConsoleLogsHandler,
 } from './handlers/browser.mjs';
+import { runNaturalLanguageCommand } from '../../browser-runs/nl-command.mjs';
 import { webUnblockerHandler } from './handlers/unblocker.mjs';
 import { spawnSubagentHandler } from '../core/subagent.mjs';
 import { handOffRun } from '../transport/n8n-handoff.mjs';
@@ -120,6 +121,12 @@ export async function executeTool(name, argsJson, ctx = {}) {
   }
 
   // Headless Browser Automation (Pillar 4)
+  if (name === 'nl_automate') {
+    const instruction = args.instruction || args.command || args.text
+    if (!instruction) return JSON.stringify({ ok: false, error: 'instruction is required' })
+    return JSON.stringify(await runNaturalLanguageCommand(instruction))
+  }
+
   if (name === 'browser_open') {
     return await browserOpenHandler(args, ctx);
   }

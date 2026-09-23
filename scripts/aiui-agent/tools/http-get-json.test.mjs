@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict'
+import http from 'node:http'
 import { describe, it } from 'node:test'
 import { isCountableBrowserRun } from '../../browser-runs/proof.mjs'
 import { httpGetJsonHandler } from './handlers/utils.mjs'
 import {
+  buildHttpGetBodyMeta,
+  fetchPublicHttpGet,
   isValidHttpGetUrl,
   resolveBrightDataProxyFromEnv,
   resolveHttpGetEgress,
@@ -23,6 +26,8 @@ describe('http_get_json Layer 1 URL gate', () => {
     assert.equal(isValidHttpGetUrl('http://172.20.0.2:8000/').ok, false)
     assert.equal(isValidHttpGetUrl('http://169.254.169.254/latest/meta-data').ok, false)
     assert.equal(isValidHttpGetUrl('http://[::1]/').ok, false)
+    assert.equal(isValidHttpGetUrl('http://host.local/x').ok, false)
+    assert.equal(isValidHttpGetUrl('http://100.64.0.1/').ok, false)
   })
 
   it('rejects file URLs and other non-http(s) schemes', () => {
@@ -46,10 +51,11 @@ describe('http_get_json Layer 1 URL gate', () => {
     assert.match(String(parsed.error), /private|loopback|link-local/i)
     assert.equal(parsed.egress, undefined)
     assert.equal(parsed.status, undefined)
+    assert.equal(parsed.finalUrl, undefined)
   })
 })
 
-describe('http_get_json Bright Data SuperProxy egress', () => {
+describe('http_get_json Bright Data residential SuperProxy egress', () => {
   it('does not use proxy when SuperProxy env is empty', () => {
     const empty = {
       BRIGHTDATA_HOST: '',
@@ -62,45 +68,105 @@ describe('http_get_json Bright Data SuperProxy egress', () => {
     assert.equal(resolveBrightDataProxyFromEnv({}), null)
   })
 
-  it('selects brightdata-proxy only when all four env vars are set', () => {
-    const cfg = resolveBrightDataProxyFromEnv({
-      BRIGHTDATA_HOST: 'brd.superproxy.io',
-      BRIGHTDATA_PORT: '33335',
-      BRIGHTDATA_USER: 'user-example',
-      BRIGHTDATA_PASS: 'redacted',
-    })
+  it('selects brightdata-residential only when all four env vars are set', () => {
+    const fake = {
+      BRIGHTDATA_HOST: 'proxy-mock.example.test',
+      BRIGHTDATA_PORT: '22225',
+      BRIGHTDATA_USER: 'brd-customer-fake-zone-residential',
+      BRIGHTDATA_PASS: 'fake-proxy-pass-not-real',
+    }
+    const cfg = resolveBrightDataProxyFromEnv(fake)
     assert.ok(cfg)
-    assert.equal(cfg.host, 'brd.superproxy.io')
-    assert.equal(cfg.port, 33335)
-    assert.equal(cfg.username, 'user-example')
+    assert.equal(cfg.host, 'proxy-mock.example.test')
+    assert.equal(cfg.port, 22225)
+    assert.equal(cfg.username, 'brd-customer-fake-zone-residential')
     assert.equal(typeof cfg.password, 'string')
-    assert.equal(
-      resolveHttpGetEgress({
-        BRIGHTDATA_HOST: 'brd.superproxy.io',
-        BRIGHTDATA_PORT: '33335',
-        BRIGHTDATA_USER: 'user-example',
-        BRIGHTDATA_PASS: 'redacted',
-      }),
-      'brightdata-proxy',
-    )
+    assert.equal(resolveHttpGetEgress(fake), 'brightdata-residential')
     // Incomplete set stays direct
     assert.equal(
       resolveHttpGetEgress({
-        BRIGHTDATA_HOST: 'brd.superproxy.io',
-        BRIGHTDATA_PORT: '33335',
+        BRIGHTDATA_HOST: 'proxy-mock.example.test',
+        BRIGHTDATA_PORT: '22225',
       }),
       'direct',
     )
+  })
+
+  it('buildHttpGetBodyMeta reports bytes and truncation', () => {
+    const short = buildHttpGetBodyMeta('{"a":1}', 'application/json; charset=utf-8')
+    assert.equal(short.contentType, 'application/json')
+    assert.equal(short.truncated, false)
+    assert.equal(short.chars, 7)
+    assert.ok(short.bytes >= 7)
+
+    const long = 'x'.repeat(5000)
+    const meta = buildHttpGetBodyMeta(long, 'text/plain')
+    assert.equal(meta.truncated, true)
+    assert.equal(meta.chars, 5000)
+    assert.equal(meta.previewChars, 4000)
+  })
+
+  it('fetchPublicHttpGet uses mocked CONNECT proxy and returns finalUrl + body meta', async () => {
+    const origin = await new Promise((resolve) => {
+      const server = http.createServer((_req, res) => {
+        res.writeHead(400)
+        res.end('expected CONNECT')
+      })
+      // Fake tunnel: accept CONNECT, then answer the proxied GET on the same socket.
+      server.on('connect', (_req, clientSocket, _head) => {
+        clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n')
+        let buf = ''
+        clientSocket.on('data', (chunk) => {
+          buf += chunk.toString('utf8')
+          if (!buf.includes('\r\n\r\n')) return
+          const payload = '{"proxy":true}\n'
+          clientSocket.write(
+            'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n' +
+              `Content-Length: ${Buffer.byteLength(payload)}\r\nConnection: close\r\n\r\n` +
+              payload,
+          )
+          clientSocket.end()
+        })
+      })
+      server.listen(0, '127.0.0.1', () => {
+        const { port } = server.address()
+        resolve({ server, port })
+      })
+    })
+
+    try {
+      const result = await fetchPublicHttpGet('http://example.com/public-json', {
+        timeoutMs: 5000,
+        env: {
+          BRIGHTDATA_HOST: '127.0.0.1',
+          BRIGHTDATA_PORT: String(origin.port),
+          BRIGHTDATA_USER: 'fake-user-not-real',
+          BRIGHTDATA_PASS: 'fake-pass-not-real',
+        },
+      })
+      assert.equal(result.egress, 'brightdata-residential')
+      assert.equal(result.status, 200)
+      assert.equal(result.ok, true)
+      assert.equal(result.finalUrl, 'http://example.com/public-json')
+      assert.match(result.data, /proxy/)
+      assert.equal(result.body.contentType, 'application/json')
+      assert.equal(result.body.truncated, false)
+      assert.ok(result.body.bytes > 0)
+    } finally {
+      origin.server.close()
+    }
   })
 })
 
 describe('http_get_json is not browser proof', () => {
   it('egress labels cannot satisfy isCountableBrowserRun', () => {
-    for (const egress of ['direct', 'brightdata-proxy']) {
+    for (const egress of ['direct', 'brightdata-residential', 'brightdata-proxy']) {
       const resultShape = {
         ok: true,
         status: 200,
         data: '{"hello":true}',
+        finalUrl: 'https://example.com/',
+        body: { contentType: 'application/json', bytes: 14, chars: 14, truncated: false },
         egress,
       }
       assert.equal(isCountableBrowserRun(resultShape), false)
@@ -109,7 +175,6 @@ describe('http_get_json is not browser proof', () => {
           ...resultShape,
           executorRan: true,
           engine: egress,
-          finalUrl: 'https://example.com/',
           httpStatus: 200,
           domAssertion: { ok: true },
           consoleErrorCount: 0,

@@ -131,7 +131,7 @@ export async function closeSession(sessionId) {
   return { ok: true, exitCode: 0, sessionId }
 }
 
-export async function openSession({ url, operatorStarted = false }) {
+export async function openSession({ url, operatorStarted = false, headless = false }) {
   if (!isOriginAllowlisted(url, readAllowlist(), { operatorStarted })) {
     return {
       ok: false,
@@ -154,7 +154,7 @@ export async function openSession({ url, operatorStarted = false }) {
 
   const id = `run-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
   const browser = await loaded.chromium.launch({
-    headless: true,
+    headless: headless === true,
     args: ['--disable-dev-shm-usage'],
   })
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } })
@@ -333,7 +333,8 @@ export async function runBlueprintProof() {
 export async function dispatchBrowserTool(name, args = {}) {
   if (name === 'browser_open') {
     const url = typeof args === 'string' ? args : args.url || args.targetUrl
-    return openSession({ url, operatorStarted: false })
+    const headless = args.headless === true || args.headless === 'true'
+    return openSession({ url, operatorStarted: false, headless })
   }
   if (name === 'browser_close') {
     const sessionId = typeof args === 'string' ? args : args.sessionId

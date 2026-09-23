@@ -1790,7 +1790,7 @@ export class AiuiAgent {
           const spin = new LiveSpinner(`Probing ${targetUrl} via headless browser...`, this.skin);
           spin.start();
           try {
-            const raw = await browserOpenHandler({ url: targetUrl, headless: true }, { workspaceDir: this.workspaceDir });
+            const raw = await browserOpenHandler({ url: targetUrl }, { workspaceDir: this.workspaceDir });
             spin.stop();
             const res = typeof raw === 'string' ? JSON.parse(raw) : raw;
             const lines = [

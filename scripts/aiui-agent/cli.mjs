@@ -50,6 +50,7 @@ export async function runCli(argv = process.argv.slice(2)) {
         `  ${rgb(...s.primary)}aiui diff${c.reset}                  Audit git diff stat and modified hunks`,
         `  ${rgb(...s.primary)}aiui daemons${c.reset}               Inspect active background process daemons`,
         `  ${rgb(...s.primary)}aiui browser [url]${c.reset}         Headless browser audit and DOM check`,
+        `  ${rgb(...s.primary)}aiui auto "<sentence>"${c.reset}    Run a natural-language web automation command`,
         `  ${rgb(...s.primary)}aiui status${c.reset}                Probe & show ecosystem telemetry dashboard`,
         `  ${rgb(...s.primary)}aiui bench${c.reset}                 Run cluster performance & TTFT benchmark suite`,
         `  ${rgb(...s.primary)}aiui matrix${c.reset}                Launch Cybernetic Matrix phosphor screensaver`,
@@ -117,6 +118,16 @@ export async function runCli(argv = process.argv.slice(2)) {
       const proc = spawn('bash', [matrixScript], { stdio: 'inherit' });
       proc.on('exit', (code) => process.exit(code || 0));
       return;
+    } else if (a === 'auto' || a === 'automate' || a === 'do') {
+      const instruction = argv.slice(i + 1).join(' ').trim()
+      if (!instruction) {
+        console.error('Usage: aiui auto "Open the local studio and click Settings"')
+        process.exit(1)
+      }
+      const { runNaturalLanguageCommand } = await import('../browser-runs/nl-command.mjs')
+      const result = await runNaturalLanguageCommand(instruction)
+      console.log(JSON.stringify(result, null, 2))
+      process.exit(result.ok ? 0 : 1)
     } else if (a === 'tools' || a === '--tools') {
       const s = getSkin(options.skin);
       const dynamicTools = dynamicToolManager.getActiveToolDefinitions();
@@ -236,7 +247,7 @@ export async function runCli(argv = process.argv.slice(2)) {
       const spin = new LiveSpinner(`Probing headless browser at ${targetUrl}...`, s);
       spin.start();
       try {
-        const raw = await browserOpenHandler({ url: targetUrl, headless: true }, { workspaceDir: options.workspaceDir });
+        const raw = await browserOpenHandler({ url: targetUrl }, { workspaceDir: options.workspaceDir });
         spin.stop();
         const res = typeof raw === 'string' ? JSON.parse(raw) : raw;
         const lines = [

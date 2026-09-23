@@ -1,12 +1,14 @@
 /**
- * Layer 1 URL gate + optional Bright Data SuperProxy egress for http_get_json.
+ * Layer 1 URL gate + optional Bright Data SuperProxy residential egress for http_get_json.
  * Public URL reads only. Never browser proof; never Web Unlocker / CAPTCHA path.
  */
 
 import http from 'node:http'
-import https from 'node:https'
 import tls from 'node:tls'
 import { URL } from 'node:url'
+
+const MAX_REDIRECTS = 5
+const BODY_PREVIEW_CHARS = 4000
 
 /**
  * @param {unknown} rawUrl
@@ -128,22 +130,46 @@ export function resolveBrightDataProxyFromEnv(env = process.env) {
 
 /**
  * @param {NodeJS.ProcessEnv} [env]
- * @returns {'brightdata-proxy' | 'direct'}
+ * @returns {'brightdata-residential' | 'direct'}
  */
 export function resolveHttpGetEgress(env = process.env) {
-  return resolveBrightDataProxyFromEnv(env) ? 'brightdata-proxy' : 'direct'
+  return resolveBrightDataProxyFromEnv(env) ? 'brightdata-residential' : 'direct'
+}
+
+/**
+ * @param {string} text
+ * @param {string | null | undefined} contentType
+ */
+export function buildHttpGetBodyMeta(text, contentType) {
+  const raw = String(text ?? '')
+  const truncated = raw.length > BODY_PREVIEW_CHARS
+  return {
+    contentType: contentType ? String(contentType).split(';')[0].trim() || null : null,
+    bytes: Buffer.byteLength(raw, 'utf8'),
+    chars: raw.length,
+    truncated,
+    previewChars: BODY_PREVIEW_CHARS,
+  }
 }
 
 /**
  * Plain GET via optional HTTP CONNECT SuperProxy. No Unlocker headers/API.
  * @param {string} urlString
  * @param {{ timeoutMs?: number, env?: NodeJS.ProcessEnv }} [opts]
+ * @returns {Promise<{
+ *   ok: boolean,
+ *   status: number,
+ *   data: string,
+ *   egress: 'brightdata-residential' | 'direct',
+ *   finalUrl: string,
+ *   body: ReturnType<typeof buildHttpGetBodyMeta>,
+ * }>}
  */
 export async function fetchPublicHttpGet(urlString, opts = {}) {
   const timeoutMs = opts.timeoutMs ?? 10000
   const env = opts.env ?? process.env
   const proxy = resolveBrightDataProxyFromEnv(env)
-  const egress = proxy ? 'brightdata-proxy' : 'direct'
+  const egress = proxy ? 'brightdata-residential' : 'direct'
 
   if (!proxy) {
     const res = await fetch(urlString, {
@@ -153,27 +179,198 @@ export async function fetchPublicHttpGet(urlString, opts = {}) {
       redirect: 'follow',
     })
     const text = await res.text()
-    return { ok: res.ok, status: res.status, data: text, egress }
+    const contentType = res.headers.get('content-type')
+    const body = buildHttpGetBodyMeta(text, contentType)
+    return {
+      ok: res.ok,
+      status: res.status,
+      data: text.slice(0, BODY_PREVIEW_CHARS),
+      egress,
+      finalUrl: String(res.url || urlString),
+      body,
+    }
   }
 
-  const { status, body } = await httpGetViaBrightDataProxy(urlString, proxy, timeoutMs)
-  return { ok: status >= 200 && status < 300, status, data: body, egress }
+  const result = await httpGetViaBrightDataProxy(urlString, proxy, timeoutMs)
+  const body = buildHttpGetBodyMeta(result.body, result.contentType)
+  return {
+    ok: result.status >= 200 && result.status < 300,
+    status: result.status,
+    data: String(result.body || '').slice(0, BODY_PREVIEW_CHARS),
+    egress,
+    finalUrl: result.finalUrl,
+    body,
+  }
 }
 
 /**
  * Single public GET through Bright Data SuperProxy (HTTP CONNECT).
  * Does not call api.brightdata.com, Web Unlocker, or captcha/cookie headers.
+ * Follows a small number of redirects only when the Location still passes the public URL gate.
  *
  * @param {string} urlString
  * @param {{ host: string, port: number, username: string, password: string }} proxy
  * @param {number} timeoutMs
  */
-function httpGetViaBrightDataProxy(urlString, proxy, timeoutMs) {
+async function httpGetViaBrightDataProxy(urlString, proxy, timeoutMs) {
+  let current = urlString
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    const gate = isValidHttpGetUrl(current)
+    if (!gate.ok) {
+      throw new Error(`Redirect target rejected: ${gate.error}`)
+    }
+    const one = await httpGetOnceViaBrightDataProxy(gate.url, proxy, timeoutMs)
+    const status = one.status
+    if (status >= 300 && status < 400 && one.location) {
+      const next = new URL(one.location, gate.url).toString()
+      current = next
+      continue
+    }
+    return {
+      status: one.status,
+      body: one.body,
+      contentType: one.contentType,
+      finalUrl: gate.url,
+    }
+  }
+  throw new Error(`Too many redirects (max ${MAX_REDIRECTS})`)
+}
+
+/**
+ * @param {string} urlString
+ * @param {{ host: string, port: number, username: string, password: string }} proxy
+ * @param {number} timeoutMs
+ */
+/**
+ * Read one HTTP response from a duplex stream (CONNECT tunnel or TLS).
+ * @param {import('node:stream').Duplex} stream
+ * @param {string} requestText
+ * @param {number} timeoutMs
+ */
+function httpExchangeOnStream(stream, requestText, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    const chunks = []
+    const timer = setTimeout(() => {
+      fail(new Error('Proxied GET timed out'))
+    }, timeoutMs)
+
+    const cleanup = () => {
+      clearTimeout(timer)
+      stream.removeListener('data', onData)
+      stream.removeListener('error', onError)
+      stream.removeListener('end', onEnd)
+    }
+
+    const fail = (err) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      try {
+        stream.destroy()
+      } catch {
+        /* ignore */
+      }
+      reject(err instanceof Error ? err : new Error(String(err)))
+    }
+
+    const succeed = (value) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve(value)
+    }
+
+    const onError = (err) => fail(err)
+
+    const tryParse = () => {
+      const buf = Buffer.concat(chunks)
+      const sep = buf.indexOf('\r\n\r\n')
+      if (sep < 0) return
+      const head = buf.subarray(0, sep).toString('utf8')
+      const lines = head.split('\r\n')
+      const statusLine = lines[0] || ''
+      const statusMatch = statusLine.match(/^HTTP\/\d(?:\.\d)?\s+(\d{3})/i)
+      const status = statusMatch ? Number(statusMatch[1]) : 0
+      /** @type {Record<string, string>} */
+      const headers = {}
+      for (let i = 1; i < lines.length; i++) {
+        const idx = lines[i].indexOf(':')
+        if (idx <= 0) continue
+        const key = lines[i].slice(0, idx).trim().toLowerCase()
+        const val = lines[i].slice(idx + 1).trim()
+        headers[key] = val
+      }
+      const bodyStart = sep + 4
+      const contentLength = headers['content-length']
+        ? Number(headers['content-length'])
+        : null
+      if (contentLength != null && Number.isFinite(contentLength)) {
+        if (buf.length < bodyStart + contentLength) return
+        const body = buf.subarray(bodyStart, bodyStart + contentLength).toString('utf8')
+        succeed({
+          status,
+          body,
+          contentType: headers['content-type'] || null,
+          location: headers.location || null,
+        })
+        return
+      }
+      // No Content-Length: wait for stream end (Connection: close).
+    }
+
+    const onData = (chunk) => {
+      chunks.push(chunk)
+      tryParse()
+    }
+
+    const onEnd = () => {
+      if (settled) return
+      const buf = Buffer.concat(chunks)
+      const sep = buf.indexOf('\r\n\r\n')
+      if (sep < 0) {
+        fail(new Error('Proxied response missing headers'))
+        return
+      }
+      const head = buf.subarray(0, sep).toString('utf8')
+      const lines = head.split('\r\n')
+      const statusLine = lines[0] || ''
+      const statusMatch = statusLine.match(/^HTTP\/\d(?:\.\d)?\s+(\d{3})/i)
+      const status = statusMatch ? Number(statusMatch[1]) : 0
+      /** @type {Record<string, string>} */
+      const headers = {}
+      for (let i = 1; i < lines.length; i++) {
+        const idx = lines[i].indexOf(':')
+        if (idx <= 0) continue
+        headers[lines[i].slice(0, idx).trim().toLowerCase()] = lines[i].slice(idx + 1).trim()
+      }
+      succeed({
+        status,
+        body: buf.subarray(sep + 4).toString('utf8'),
+        contentType: headers['content-type'] || null,
+        location: headers.location || null,
+      })
+    }
+
+    stream.on('data', onData)
+    stream.on('error', onError)
+    stream.on('end', onEnd)
+    stream.write(requestText)
+  })
+}
+
+function httpGetOnceViaBrightDataProxy(urlString, proxy, timeoutMs) {
   const target = new URL(urlString)
   const isHttps = target.protocol === 'https:'
   const destPort = Number(target.port) || (isHttps ? 443 : 80)
   const auth = Buffer.from(`${proxy.username}:${proxy.password}`, 'utf8').toString('base64')
   const path = `${target.pathname || '/'}${target.search || ''}`
+  const requestText =
+    `GET ${path} HTTP/1.1\r\n` +
+    `Host: ${target.host}\r\n` +
+    'Accept: application/json,text/plain,*/*\r\n' +
+    'Connection: close\r\n' +
+    '\r\n'
 
   return new Promise((resolve, reject) => {
     const connectReq = http.request({
@@ -203,37 +400,8 @@ function httpGetViaBrightDataProxy(urlString, proxy, timeoutMs) {
         return
       }
 
-      const openRequest = (connection) => {
-        const req = (isHttps ? https : http).request(
-          {
-            protocol: target.protocol,
-            hostname: target.hostname,
-            port: destPort,
-            method: 'GET',
-            path,
-            headers: {
-              Host: target.host,
-              Accept: 'application/json,text/plain,*/*',
-              Connection: 'close',
-            },
-            agent: false,
-            createConnection: () => connection,
-            timeout: timeoutMs,
-          },
-          (proxiedRes) => {
-            const chunks = []
-            proxiedRes.on('data', (c) => chunks.push(c))
-            proxiedRes.on('end', () => {
-              resolve({
-                status: proxiedRes.statusCode || 0,
-                body: Buffer.concat(chunks).toString('utf8'),
-              })
-            })
-          },
-        )
-        req.on('timeout', () => req.destroy(new Error('Proxied GET timed out')))
-        req.on('error', reject)
-        req.end()
+      const run = (stream) => {
+        httpExchangeOnStream(stream, requestText, timeoutMs).then(resolve, reject)
       }
 
       if (isHttps) {
@@ -243,7 +411,7 @@ function httpGetViaBrightDataProxy(urlString, proxy, timeoutMs) {
             servername: target.hostname,
             timeout: timeoutMs,
           },
-          () => openRequest(tlsSocket),
+          () => run(tlsSocket),
         )
         tlsSocket.on('error', reject)
         tlsSocket.on('timeout', () => {
@@ -251,7 +419,7 @@ function httpGetViaBrightDataProxy(urlString, proxy, timeoutMs) {
           reject(new Error('Proxied TLS timed out'))
         })
       } else {
-        openRequest(socket)
+        run(socket)
       }
     })
 

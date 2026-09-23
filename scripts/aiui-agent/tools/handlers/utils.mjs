@@ -33,7 +33,7 @@ export async function listModelsHandler(args, ctx) {
 
 /**
  * Handle http_get_json tool invocation.
- * Layer 1: gated public http(s) GET only. Optional SuperProxy when BRIGHTDATA_* env is set.
+ * Layer 1: gated public http(s) GET only. Optional residential SuperProxy when BRIGHTDATA_* env is set.
  * Never counts as browser proof; never Unlocker/CAPTCHA/cookie path.
  */
 export async function httpGetJsonHandler(args) {
@@ -47,7 +47,9 @@ export async function httpGetJsonHandler(args) {
     return JSON.stringify({
       ok: result.ok,
       status: result.status,
+      finalUrl: result.finalUrl,
       data: String(result.data || '').slice(0, 4000),
+      body: result.body,
       egress: result.egress,
     })
   } catch (err) {

@@ -4,7 +4,7 @@
  */
 
 import { resolveVerificationGateCommand } from './goalVerification.ts';
-import { fetchWithRetry } from './resilientFetch';
+import { fetchWithRetry } from './resilientFetch.ts';
 
 export type ExecutionTarget = 'local_mac' | 'dgx_spark' | 'container';
 

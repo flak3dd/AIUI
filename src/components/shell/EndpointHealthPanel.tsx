@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { fetchWithRetry } from '../../lib/resilientFetch'
+import { fetchWithRetry } from '../../lib/resilientFetch.ts'
 
 type EndpointRow = {
   id: string

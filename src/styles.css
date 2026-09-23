@@ -793,20 +793,20 @@ button.btn-sm {
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.65), 0 0 1px rgba(var(--accent-rgb), 0.2);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   padding: 8px 12px 10px;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: border-color 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   position: relative;
 }
 
 .composer-capsule:focus-within {
-  border-color: var(--sat-cyan);
-  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.75), 0 0 0 1px var(--sat-cyan), 0 0 24px rgba(var(--accent-rgb), 0.25);
+  border-color: rgba(var(--accent-2-rgb), 0.55);
+  box-shadow: none;
 }
 
 /* Simplified Context HUD Strip */
@@ -897,18 +897,20 @@ button.btn-sm {
 /* Clean Prompt Textarea */
 .composer-textarea {
   width: 100%;
-  min-height: 52px;
-  max-height: 180px;
+  min-height: 36px;
+  max-height: 160px;
   resize: none;
   background: transparent;
   border: none;
   border-radius: 0;
   padding: 6px 2px;
-  font-size: 13px;
-  line-height: 1.55;
+  font-size: 15px;
+  line-height: 1.45;
   color: var(--text);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   outline: none;
+  overflow-y: auto;
+  field-sizing: content;
 }
 
 .composer-textarea::placeholder {
@@ -918,15 +920,22 @@ button.btn-sm {
   font-family: var(--font-sans);
 }
 
-/* Bottom Bar — one quiet row: How this runs + Send */
+/* Bottom Bar — controls row, then full-width setup body */
 .composer-bottom-bar {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding-top: 0;
+  border-top: none;
+}
+.composer-bottom-controls {
   display: flex;
   flex-direction: row;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
+  gap: 8px;
+  width: 100%;
 }
 .composer-send-row {
   display: flex;
@@ -5125,15 +5134,15 @@ body {
   border-radius: var(--radius-md);
   background: var(--surface-2);
   border: 1px solid var(--border);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  box-shadow: none;
   padding: 10px 14px 12px;
 }
 .composer-capsule:focus-within {
   border-color: rgba(var(--accent-2-rgb), 0.55);
-  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(var(--accent-2-rgb), 0.25);
+  box-shadow: none;
 }
 
-/* Engine choices live in details.composer-setup, closed until asked. */
+/* Engine choices live in .composer-setup-body, closed until asked. */
 
 .composer-top-bar {
   border-bottom-color: var(--border);
@@ -5178,8 +5187,9 @@ body {
 .composer-textarea {
   font-family: var(--font-sans);
   font-size: 15px;
-  line-height: 1.5;
-  min-height: 52px;
+  line-height: 1.45;
+  min-height: 36px;
+  max-height: 160px;
   color: var(--boldface-cream-ink);
 }
 .composer-textarea::placeholder {
@@ -5293,31 +5303,33 @@ body {
 .hero-action-card.is-selected .card-title {
   color: var(--accent-2);
 }
-.composer-setup {
-  width: auto;
+.composer-setup-toggle {
+  appearance: none;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--font-sans);
+  color: var(--text-dim);
+  padding: 7px 2px;
+  user-select: none;
+  text-align: left;
   flex: 1 1 auto;
   min-width: 0;
+}
+.composer-setup-toggle:hover {
+  color: var(--text);
+}
+.composer-setup-toggle[aria-expanded="true"] {
+  color: var(--text);
 }
 .composer-setup-body {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding-top: 10px;
-}
-.composer-setup > summary {
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-dim);
-  list-style: none;
-  padding: 4px 0;
-  user-select: none;
-}
-.composer-setup > summary:hover {
-  color: var(--text);
-}
-.composer-setup > summary::-webkit-details-marker {
-  display: none;
+  padding-top: 8px;
+  width: 100%;
 }
 @media (max-width: 720px) {
   .hero-cards-grid-simple {
@@ -5532,8 +5544,12 @@ body {
     display: none !important;
   }
   .composer-bottom-bar {
+    gap: 0;
+    padding-top: 0;
+    align-items: stretch;
+  }
+  .composer-bottom-controls {
     gap: 8px;
-    padding-top: 4px;
     align-items: center;
   }
   .composer-tool-btn,
@@ -6886,32 +6902,50 @@ body {
 
 .devin-chat-composer-form {
   display: flex;
-  align-items: flex-end;
-  gap: 8px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
   background: var(--surface-2);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 8px 10px;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  border-radius: var(--radius-md);
+  padding: 6px 8px 6px 14px;
+  box-shadow: none;
+  transition: border-color 0.15s ease;
 }
 
 .devin-chat-composer-form:focus-within {
   border-color: rgba(var(--accent-2-rgb), 0.55);
-  box-shadow: 0 0 0 1px rgba(var(--accent-2-rgb), 0.2);
+  box-shadow: none;
+}
+
+.devin-chat-composer-form .composer-input-wrapper {
+  width: 100%;
+  min-width: 0;
+}
+
+.devin-chat-composer-form .composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  width: 100%;
 }
 
 .devin-chat-textarea {
-  flex: 1;
+  width: 100%;
   background: transparent;
   border: none;
   outline: none;
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: 15px;
+  line-height: 1.45;
   color: var(--text);
   resize: none;
-  max-height: 180px;
-  min-height: 38px;
-  font-family: inherit;
+  max-height: 160px;
+  min-height: 36px;
+  padding: 8px 2px 2px;
+  font-family: var(--font-sans);
+  overflow-y: auto;
+  field-sizing: content;
 }
 
 .devin-chat-textarea::placeholder {
@@ -8296,15 +8330,32 @@ header.term-titlebar {
   overflow-y: auto;
 }
 .composer-bottom-bar {
-  align-items: flex-start;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   border-top: none;
   padding-top: 0;
+  gap: 0;
+}
+.composer-bottom-controls {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
 }
-.composer-setup > summary {
+.composer-setup-toggle {
   padding: 7px 2px;
   font-size: 12px;
   font-weight: 600;
+  color: var(--text-dim);
+}
+.composer-setup-toggle:hover,
+.composer-setup-toggle[aria-expanded="true"] {
+  color: var(--text);
+}
+.composer-setup-body {
+  width: 100%;
 }
 .composer-send-row {
   padding-top: 2px;

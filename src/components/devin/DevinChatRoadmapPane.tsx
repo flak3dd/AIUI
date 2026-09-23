@@ -88,13 +88,16 @@ export const DevinChatRoadmapPane: React.FC<DevinChatRoadmapPaneProps> = ({
     }
   }, [messages, busy, activeTab]);
 
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, [chatInput]);
+
   // Auto-resize textarea
   const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setChatInput(e.target.value);
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 180)}px`;
-    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -380,7 +383,7 @@ export const DevinChatRoadmapPane: React.FC<DevinChatRoadmapPaneProps> = ({
                   <button
                     type="button"
                     className="capability-card"
-                    onClick={() => handleQuickPrompt('Launch Playwright headless browser E2E test on active web environment')}
+                    onClick={() => handleQuickPrompt('Launch Playwright in a visible Chrome window and run an E2E test on the active web environment')}
                   >
                     <span className="card-icon">🌐</span>
                     <div className="card-text">
@@ -740,7 +743,7 @@ export const DevinChatRoadmapPane: React.FC<DevinChatRoadmapPaneProps> = ({
           <button
             type="button"
             className="devin-prompt-chip"
-            onClick={() => handleQuickPrompt('Run Playwright headless browser E2E test')}
+            onClick={() => handleQuickPrompt('Run Playwright in a visible Chrome window')}
           >
             🌐 Browser QA
           </button>

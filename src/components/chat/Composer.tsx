@@ -217,404 +217,406 @@ export function Composer(props: ComposerProps) {
               />
 
               <div className="composer-bottom-bar">
-                <details
-                  className="composer-setup"
-                  open={composerAdvanced}
-                  onToggle={(e) => setComposerAdvanced(e.currentTarget.open)}
-                >
-                  <summary>How this runs</summary>
-                  <div className="composer-setup-body">
-              <div className="composer-top-bar">
-                <div className="composer-selectors">
-                  <select
-                    className="composer-select-compact"
-                    value={settings.model}
-                    onChange={(e) => {
-                      persist({ ...settings, model: e.target.value })
-                      showToast(`Model → ${modelLabel(e.target.value)}`, { type: 'info' })
-                    }}
-                    disabled={busy}
-                    title="Model"
-                  >
-                    {(filteredModels.length ? filteredModels : models).map((id) => {
-                      const gated = gatedIds.has(id) || isGatedModelId(id)
-                      const label = modelLabel(id)
-                      return (
-                        <option key={id} value={id}>
-                          {gated ? `${label} (gated)` : label}
-                        </option>
-                      )
-                    })}
-                  </select>
-
-                  <select
-                    className="composer-select-compact"
-                    value={bashTarget}
-                    onChange={(e) => {
-                      const t = e.target.value as ExecutionTarget
-                      handleTargetChange(t)
-                      showToast(`Run on ${t}`, { type: 'info' })
-                    }}
-                    title="Where to run commands"
-                  >
-                    <option value="local_mac">This Mac</option>
-                    <option value="dgx_spark">Spark</option>
-                    <option value="container">Linux pod</option>
-                  </select>
-
-                  <select
-                    className="composer-select-compact"
-                    value={settings.provider}
-                    onChange={(e) => {
-                      const nextProvider = e.target.value as ProviderId
-                      persist({ ...settings, provider: nextProvider, model: preferFor(nextProvider)[0] })
-                      showToast(`Provider → ${nextProvider}`, { type: 'info' })
-                    }}
-                    disabled={busy}
-                    title="Provider"
-                  >
-                    <option value="spark">GX10 Spark</option>
-                    <option value="featherless">Featherless</option>
-                    <option value="abliteration">Abliteration</option>
-                  </select>
-
-                  {settings.provider === 'spark' && (
-                    <select
-                      className="composer-select-compact"
-                      value={settings.sparkRoute || 'both'}
-                      disabled={busy}
-                      title="Spark vLLM route. Both opens LAN and Tailscale and streams the first one that answers."
-                      onChange={(e) => {
-                        const sparkRoute = e.target.value as SparkRoute
-                        persist({ ...settings, sparkRoute })
-                        const label = sparkRoute === 'both' ? 'LAN + Tailscale' : sparkRoute === 'lan' ? 'LAN' : 'Tailscale'
-                        showToast(`vLLM → ${label}`, { type: 'info' })
-                      }}
-                    >
-                      <option value="both">LAN + Tailscale</option>
-                      <option value="lan">LAN</option>
-                      <option value="tailscale">Tailscale</option>
-                    </select>
-                  )}
-
+                <div className="composer-bottom-controls">
                   <button
                     type="button"
-                    className={`composer-tool-btn ${showModelSearch ? 'active' : ''}`}
-                    onClick={() => setShowModelSearch(!showModelSearch)}
-                    title="Search / filter models"
+                    className="composer-setup-toggle"
+                    aria-expanded={composerAdvanced}
+                    aria-controls="composer-setup-panel"
+                    onClick={() => setComposerAdvanced((open) => !open)}
                   >
-                    Search
+                    How this runs
                   </button>
+                  <div className="composer-send-row">
+                    <div className="composer-actions">
+                      {busy && (
+                        <button type="button" className="btn-stop" onClick={stop} title="Halt current execution">
+                          Stop
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="primary composer-send-btn"
+                        onClick={() => void send()}
+                        disabled={busy || !input.trim()}
+                        title="Send (Enter)"
+                      >
+                        Send
+                      </button>
+                    </div>
+                  </div>
+                </div>
 
-                  {showModelSearch && (
-                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                      <input
-                        className="composer-select-compact"
-                        style={{ width: 110, fontSize: 11 }}
-                        placeholder="Search…"
-                        value={modelQuery}
-                        onChange={(e) => setModelQuery(e.target.value)}
-                        autoFocus
-                      />
-                      {settings.provider === 'featherless' && (
-                        <label className="chip clickable" style={{ padding: '2px 5px', fontSize: 10 }}>
+                {composerAdvanced && (
+                  <div className="composer-setup-body" id="composer-setup-panel">
+                    <div className="composer-top-bar">
+                      <div className="composer-selectors">
+                        <select
+                          className="composer-select-compact"
+                          value={settings.model}
+                          onChange={(e) => {
+                            persist({ ...settings, model: e.target.value })
+                            showToast(`Model → ${modelLabel(e.target.value)}`, { type: 'info' })
+                          }}
+                          disabled={busy}
+                          title="Model"
+                        >
+                          {(filteredModels.length ? filteredModels : models).map((id) => {
+                            const gated = gatedIds.has(id) || isGatedModelId(id)
+                            const label = modelLabel(id)
+                            return (
+                              <option key={id} value={id}>
+                                {gated ? `${label} (gated)` : label}
+                              </option>
+                            )
+                          })}
+                        </select>
+
+                        <select
+                          className="composer-select-compact"
+                          value={bashTarget}
+                          onChange={(e) => {
+                            const t = e.target.value as ExecutionTarget
+                            handleTargetChange(t)
+                            showToast(`Run on ${t}`, { type: 'info' })
+                          }}
+                          title="Where to run commands"
+                        >
+                          <option value="local_mac">This Mac</option>
+                          <option value="dgx_spark">Spark</option>
+                          <option value="container">Linux pod</option>
+                        </select>
+
+                        <select
+                          className="composer-select-compact"
+                          value={settings.provider}
+                          onChange={(e) => {
+                            const nextProvider = e.target.value as ProviderId
+                            persist({ ...settings, provider: nextProvider, model: preferFor(nextProvider)[0] })
+                            showToast(`Provider → ${nextProvider}`, { type: 'info' })
+                          }}
+                          disabled={busy}
+                          title="Provider"
+                        >
+                          <option value="spark">GX10 Spark</option>
+                          <option value="featherless">Featherless</option>
+                          <option value="abliteration">Abliteration</option>
+                        </select>
+
+                        {settings.provider === 'spark' && (
+                          <select
+                            className="composer-select-compact"
+                            value={settings.sparkRoute || 'both'}
+                            disabled={busy}
+                            title="Spark vLLM route. Both opens LAN and Tailscale and streams the first one that answers."
+                            onChange={(e) => {
+                              const sparkRoute = e.target.value as SparkRoute
+                              persist({ ...settings, sparkRoute })
+                              const label = sparkRoute === 'both' ? 'LAN + Tailscale' : sparkRoute === 'lan' ? 'LAN' : 'Tailscale'
+                              showToast(`vLLM → ${label}`, { type: 'info' })
+                            }}
+                          >
+                            <option value="both">LAN + Tailscale</option>
+                            <option value="lan">LAN</option>
+                            <option value="tailscale">Tailscale</option>
+                          </select>
+                        )}
+
+                        <button
+                          type="button"
+                          className={`composer-tool-btn ${showModelSearch ? 'active' : ''}`}
+                          onClick={() => setShowModelSearch(!showModelSearch)}
+                          title="Search / filter models"
+                        >
+                          Search
+                        </button>
+
+                        {showModelSearch && (
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            <input
+                              className="composer-select-compact"
+                              style={{ width: 110, fontSize: 11 }}
+                              placeholder="Search…"
+                              value={modelQuery}
+                              onChange={(e) => setModelQuery(e.target.value)}
+                              autoFocus
+                            />
+                            {settings.provider === 'featherless' && (
+                              <label className="chip clickable" style={{ padding: '2px 5px', fontSize: 10 }}>
+                                <input
+                                  type="checkbox"
+                                  checked={hideGated}
+                                  onChange={(e) => setHideGated(e.target.checked)}
+                                  style={{ marginRight: 2 }}
+                                />
+                                Ungated
+                              </label>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="composer-toggles-strip">
+                        <button
+                          type="button"
+                          className="composer-toggle-pill composer-optimise-pill"
+                          title="Run complete system, memory, policy & GPU optimization in chat (shortcut: 'optimise')"
+                          disabled={busy}
+                          onClick={() => {
+                            if (onSendPrompt) {
+                              onSendPrompt('optimise')
+                            } else {
+                              setInput('optimise')
+                              setTimeout(() => void send(), 20)
+                            }
+                          }}
+                        >
+                          <span>Optimise</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          className={`composer-toggle-pill optimize ${settings.optimizeChatResponses !== false ? 'active' : ''}`}
+                          title="Continuously optimize chat responses (monitor + MemPalace)"
+                          disabled={busy}
+                          onClick={() => {
+                            const next = !(settings.optimizeChatResponses !== false)
+                            persist({ ...settings, optimizeChatResponses: next })
+                            showToast(next ? 'Response optimizer ON' : 'Response optimizer OFF', { type: 'info' })
+                          }}
+                        >
+                          Auto-optimize
+                        </button>
+
+                        <label className="setup-check" title="Auto-run shell steps the agent writes">
                           <input
                             type="checkbox"
-                            checked={hideGated}
-                            onChange={(e) => setHideGated(e.target.checked)}
-                            style={{ marginRight: 2 }}
-                          />
-                          Ungated
-                        </label>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                <div className="composer-toggles-strip">
-                  <button
-                    type="button"
-                    className="composer-toggle-pill composer-optimise-pill"
-                    title="Run complete system, memory, policy & GPU optimization in chat (shortcut: 'optimise')"
-                    disabled={busy}
-                    onClick={() => {
-                      if (onSendPrompt) {
-                        onSendPrompt('optimise')
-                      } else {
-                        setInput('optimise')
-                        setTimeout(() => void send(), 20)
-                      }
-                    }}
-                  >
-                    <span>Optimise</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    className={`composer-toggle-pill optimize ${settings.optimizeChatResponses !== false ? 'active' : ''}`}
-                    title="Continuously optimize chat responses (monitor + MemPalace)"
-                    disabled={busy}
-                    onClick={() => {
-                      const next = !(settings.optimizeChatResponses !== false)
-                      persist({ ...settings, optimizeChatResponses: next })
-                      showToast(next ? 'Response optimizer ON' : 'Response optimizer OFF', { type: 'info' })
-                    }}
-                  >
-                    Auto-optimize
-                  </button>
-
-                  <label className="setup-check" title="Auto-run shell steps the agent writes">
-                    <input
-                      type="checkbox"
-                      checked={autoAblit}
-                      disabled={busy}
-                      onChange={(e) => {
-                        handleAutoAblitToggle(e.target.checked)
-                        showToast(e.target.checked ? 'Abliteration on' : 'Abliteration off', { type: 'info' })
-                      }}
-                    />
-                    Abliteration
-                  </label>
-
-                  <label className="setup-check" title="Enable Memory Palace episodic auto-recall">
-                    <input
-                      type="checkbox"
-                      checked={autoRecall}
-                      onChange={(e) => handleAutoRecallToggle(e.target.checked)}
-                    />
-                    Recall
-                  </label>
-
-                  <label className="setup-check" title="Enable Memory Palace auto-checkpointing">
-                    <input
-                      type="checkbox"
-                      checked={autoCheckpoint}
-                      onChange={(e) => handleAutoCheckpointToggle(e.target.checked)}
-                    />
-                    Checkpoint
-                  </label>
-
-                  <button
-                    type="button"
-                    className={`composer-params-toggle-btn ${paramsAccordionOpen ? 'active' : ''}`}
-                    onClick={() => setParamsAccordionOpen(!paramsAccordionOpen)}
-                    title="Temperature & token params"
-                  >
-                    <span>⚙</span>
-                    <span style={{ fontSize: 9.5, opacity: 0.85 }}>T:{settings.temperature ?? 0.7}</span>
-                    <span className={`fui-chevron ${paramsAccordionOpen ? 'open' : ''}`}>▾</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Expandable Hyperparameters & Telemetry Accordion Drawer */}
-              <div className={`composer-params-accordion ${paramsAccordionOpen ? 'open' : ''}`}>
-                <div className="params-header-row">
-                  <span className="params-title">// HYPERPARAMETERS & REASONING DOCK</span>
-                  <div className="params-presets-row">
-                    <span style={{ fontSize: 10, color: 'var(--text-dim)', marginRight: 4 }}>PRESETS:</span>
-                    <button
-                      type="button"
-                      className="params-preset-pill"
-                      onClick={() => {
-                        persist({ ...settings, temperature: 0.1, maxTokens: 4096 })
-                        showToast('Preset: Fast & Deterministic (T: 0.1)', { type: 'info' })
-                      }}
-                    >
-                      ⚡ Fast (0.1)
-                    </button>
-                    <button
-                      type="button"
-                      className="params-preset-pill"
-                      onClick={() => {
-                        persist({ ...settings, temperature: 0.7, maxTokens: 4096 })
-                        showToast('Preset: Balanced (T: 0.7)', { type: 'info' })
-                      }}
-                    >
-                      ⚖️ Balanced (0.7)
-                    </button>
-                    <button
-                      type="button"
-                      className="params-preset-pill"
-                      onClick={() => {
-                        persist({ ...settings, temperature: 0.6, maxTokens: 8192 })
-                        showToast('Preset: Deep Reasoning (T: 0.6, 8k)', { type: 'info' })
-                      }}
-                    >
-                      🧠 Reasoning (0.6, 8k)
-                    </button>
-                    <button
-                      type="button"
-                      className="params-preset-pill"
-                      onClick={() => {
-                        persist({ ...settings, temperature: 1.0, maxTokens: 4096 })
-                        showToast('Preset: Creative & Exploratory (T: 1.0)', { type: 'info' })
-                      }}
-                    >
-                      🎨 Creative (1.0)
-                    </button>
-                  </div>
-                </div>
-
-                <div className="params-grid">
-                  {/* Temperature Slider */}
-                  <div className="param-slider-group">
-                    <div className="param-slider-label-row">
-                      <span className="param-slider-name">Temperature</span>
-                      <span className="param-slider-val">{settings.temperature ?? 0.7}</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="0.0"
-                      max="1.5"
-                      step="0.05"
-                      className="param-slider-input"
-                      value={settings.temperature ?? 0.7}
-                      onChange={(e) => persist({ ...settings, temperature: parseFloat(e.target.value) })}
-                    />
-                  </div>
-
-                  {/* Max Tokens Slider */}
-                  <div className="param-slider-group">
-                    <div className="param-slider-label-row">
-                      <span className="param-slider-name">Max Output Tokens</span>
-                      <span className="param-slider-val">{settings.maxTokens ?? 4096}</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="1024"
-                      max="8192"
-                      step="512"
-                      className="param-slider-input"
-                      value={settings.maxTokens ?? 4096}
-                      onChange={(e) => persist({ ...settings, maxTokens: parseInt(e.target.value, 10) })}
-                    />
-                  </div>
-
-                  {/* Agent Max Rounds */}
-                  <div className="param-slider-group">
-                    <div className="param-slider-label-row">
-                      <span className="param-slider-name">Autonomous Loop Limit</span>
-                      <span className="param-slider-val">{settings.agentMaxRounds ?? 8} rounds</span>
-                    </div>
-                    <input
-                      type="range"
-                      min="1"
-                      max="20"
-                      step="1"
-                      className="param-slider-input"
-                      value={settings.agentMaxRounds ?? 8}
-                      onChange={(e) => persist({ ...settings, agentMaxRounds: parseInt(e.target.value, 10) })}
-                    />
-                  </div>
-                </div>
-
-                <div className="params-toggles-row">
-                  <label className="param-checkbox-label" title="Enable Memory Palace episodic auto-recall">
-                    <input
-                      type="checkbox"
-                      checked={autoRecall}
-                      onChange={(e) => handleAutoRecallToggle(e.target.checked)}
-                    />
-                    <span>MemPalace Auto-Recall</span>
-                  </label>
-
-                  <label className="param-checkbox-label" title="Enable Memory Palace auto-checkpointing">
-                    <input
-                      type="checkbox"
-                      checked={autoCheckpoint}
-                      onChange={(e) => handleAutoCheckpointToggle(e.target.checked)}
-                    />
-                    <span>Auto-Checkpointing</span>
-                  </label>
-                </div>
-
-                {/* Abliterated Filter & Laser Field HUD Row */}
-                <div className="params-laser-row">
-                  <div className="params-laser-header">
-                    <span className="params-laser-title">// LASER PERSPECTIVE GRID:</span>
-                    <div className="params-laser-modes">
-                      <button
-                        type="button"
-                        className={`laser-mode-pill ${(settings.laserMode || 'auto') === 'auto' ? 'active' : ''}`}
-                        onClick={() => {
-                          persist({ ...settings, laserMode: 'auto' })
-                          showToast('Laser grid: Auto (model-reactive)', { type: 'info' })
-                        }}
-                      >
-                        ⚡ Auto
-                      </button>
-                      <button
-                        type="button"
-                        className={`laser-mode-pill ${(settings.laserMode || 'auto') === 'manual' ? 'active' : ''}`}
-                        onClick={() => {
-                          persist({ ...settings, laserMode: 'manual' })
-                          showToast('Laser grid: Manual override', { type: 'info' })
-                        }}
-                      >
-                        🎯 Manual
-                      </button>
-                      <button
-                        type="button"
-                        className={`laser-mode-pill ${settings.laserMode === 'off' ? 'active' : ''}`}
-                        onClick={() => {
-                          persist({ ...settings, laserMode: 'off' })
-                          showToast('Laser grid: Off', { type: 'info' })
-                        }}
-                      >
-                        🚫 Off
-                      </button>
-                    </div>
-                  </div>
-
-                  {settings.laserMode === 'manual' && (
-                    <div className="params-laser-levels">
-                      {ABLITERATION_LEVEL_ORDER.map((lvl) => {
-                        const meta = ABLITERATION_LEVELS[lvl]
-                        const isSel = (settings.laserLevelManual ?? 3) === lvl
-                        return (
-                          <button
-                            key={lvl}
-                            type="button"
-                            className={`laser-level-pill ${isSel ? 'selected' : ''}`}
-                            style={{ '--lvl-color': meta.color } as React.CSSProperties}
-                            onClick={() => {
-                              persist({ ...settings, laserMode: 'manual', laserLevelManual: lvl })
-                              showToast(`Laser level: ${meta.label} (${meta.tag})`, { type: 'info' })
+                            checked={autoAblit}
+                            disabled={busy}
+                            onChange={(e) => {
+                              handleAutoAblitToggle(e.target.checked)
+                              showToast(e.target.checked ? 'Abliteration on' : 'Abliteration off', { type: 'info' })
                             }}
-                            title={`${meta.label} (${meta.tag}): ${meta.desc}`}
-                          >
-                            <span className="lvl-dot" />
-                            <span className="lvl-num">{lvl}</span>
-                            <span className="lvl-name">{meta.label}</span>
-                          </button>
-                        )
-                      })}
+                          />
+                          Abliteration
+                        </label>
+
+                        <label className="setup-check" title="Enable Memory Palace episodic auto-recall">
+                          <input
+                            type="checkbox"
+                            checked={autoRecall}
+                            onChange={(e) => handleAutoRecallToggle(e.target.checked)}
+                          />
+                          Recall
+                        </label>
+
+                        <label className="setup-check" title="Enable Memory Palace auto-checkpointing">
+                          <input
+                            type="checkbox"
+                            checked={autoCheckpoint}
+                            onChange={(e) => handleAutoCheckpointToggle(e.target.checked)}
+                          />
+                          Checkpoint
+                        </label>
+
+                        <button
+                          type="button"
+                          className={`composer-params-toggle-btn ${paramsAccordionOpen ? 'active' : ''}`}
+                          onClick={() => setParamsAccordionOpen(!paramsAccordionOpen)}
+                          title="Temperature & token params"
+                        >
+                          <span>⚙</span>
+                          <span style={{ fontSize: 9.5, opacity: 0.85 }}>T:{settings.temperature ?? 0.7}</span>
+                          <span className={`fui-chevron ${paramsAccordionOpen ? 'open' : ''}`}>▾</span>
+                        </button>
+                      </div>
                     </div>
-                  )}
-                </div>
+
+                    <div className={`composer-params-accordion ${paramsAccordionOpen ? 'open' : ''}`}>
+                      <div className="params-header-row">
+                        <span className="params-title">// HYPERPARAMETERS & REASONING DOCK</span>
+                        <div className="params-presets-row">
+                          <span style={{ fontSize: 10, color: 'var(--text-dim)', marginRight: 4 }}>PRESETS:</span>
+                          <button
+                            type="button"
+                            className="params-preset-pill"
+                            onClick={() => {
+                              persist({ ...settings, temperature: 0.1, maxTokens: 4096 })
+                              showToast('Preset: Fast & Deterministic (T: 0.1)', { type: 'info' })
+                            }}
+                          >
+                            ⚡ Fast (0.1)
+                          </button>
+                          <button
+                            type="button"
+                            className="params-preset-pill"
+                            onClick={() => {
+                              persist({ ...settings, temperature: 0.7, maxTokens: 4096 })
+                              showToast('Preset: Balanced (T: 0.7)', { type: 'info' })
+                            }}
+                          >
+                            ⚖️ Balanced (0.7)
+                          </button>
+                          <button
+                            type="button"
+                            className="params-preset-pill"
+                            onClick={() => {
+                              persist({ ...settings, temperature: 0.6, maxTokens: 8192 })
+                              showToast('Preset: Deep Reasoning (T: 0.6, 8k)', { type: 'info' })
+                            }}
+                          >
+                            🧠 Reasoning (0.6, 8k)
+                          </button>
+                          <button
+                            type="button"
+                            className="params-preset-pill"
+                            onClick={() => {
+                              persist({ ...settings, temperature: 1.0, maxTokens: 4096 })
+                              showToast('Preset: Creative & Exploratory (T: 1.0)', { type: 'info' })
+                            }}
+                          >
+                            🎨 Creative (1.0)
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="params-grid">
+                        <div className="param-slider-group">
+                          <div className="param-slider-label-row">
+                            <span className="param-slider-name">Temperature</span>
+                            <span className="param-slider-val">{settings.temperature ?? 0.7}</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="0.0"
+                            max="1.5"
+                            step="0.05"
+                            className="param-slider-input"
+                            value={settings.temperature ?? 0.7}
+                            onChange={(e) => persist({ ...settings, temperature: parseFloat(e.target.value) })}
+                          />
+                        </div>
+
+                        <div className="param-slider-group">
+                          <div className="param-slider-label-row">
+                            <span className="param-slider-name">Max Output Tokens</span>
+                            <span className="param-slider-val">{settings.maxTokens ?? 4096}</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="1024"
+                            max="8192"
+                            step="512"
+                            className="param-slider-input"
+                            value={settings.maxTokens ?? 4096}
+                            onChange={(e) => persist({ ...settings, maxTokens: parseInt(e.target.value, 10) })}
+                          />
+                        </div>
+
+                        <div className="param-slider-group">
+                          <div className="param-slider-label-row">
+                            <span className="param-slider-name">Autonomous Loop Limit</span>
+                            <span className="param-slider-val">{settings.agentMaxRounds ?? 8} rounds</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="1"
+                            max="20"
+                            step="1"
+                            className="param-slider-input"
+                            value={settings.agentMaxRounds ?? 8}
+                            onChange={(e) => persist({ ...settings, agentMaxRounds: parseInt(e.target.value, 10) })}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="params-toggles-row">
+                        <label className="param-checkbox-label" title="Enable Memory Palace episodic auto-recall">
+                          <input
+                            type="checkbox"
+                            checked={autoRecall}
+                            onChange={(e) => handleAutoRecallToggle(e.target.checked)}
+                          />
+                          <span>MemPalace Auto-Recall</span>
+                        </label>
+
+                        <label className="param-checkbox-label" title="Enable Memory Palace auto-checkpointing">
+                          <input
+                            type="checkbox"
+                            checked={autoCheckpoint}
+                            onChange={(e) => handleAutoCheckpointToggle(e.target.checked)}
+                          />
+                          <span>Auto-Checkpointing</span>
+                        </label>
+                      </div>
+
+                      <div className="params-laser-row">
+                        <div className="params-laser-header">
+                          <span className="params-laser-title">// LASER PERSPECTIVE GRID:</span>
+                          <div className="params-laser-modes">
+                            <button
+                              type="button"
+                              className={`laser-mode-pill ${(settings.laserMode || 'auto') === 'auto' ? 'active' : ''}`}
+                              onClick={() => {
+                                persist({ ...settings, laserMode: 'auto' })
+                                showToast('Laser grid: Auto (model-reactive)', { type: 'info' })
+                              }}
+                            >
+                              ⚡ Auto
+                            </button>
+                            <button
+                              type="button"
+                              className={`laser-mode-pill ${(settings.laserMode || 'auto') === 'manual' ? 'active' : ''}`}
+                              onClick={() => {
+                                persist({ ...settings, laserMode: 'manual' })
+                                showToast('Laser grid: Manual override', { type: 'info' })
+                              }}
+                            >
+                              🎯 Manual
+                            </button>
+                            <button
+                              type="button"
+                              className={`laser-mode-pill ${settings.laserMode === 'off' ? 'active' : ''}`}
+                              onClick={() => {
+                                persist({ ...settings, laserMode: 'off' })
+                                showToast('Laser grid: Off', { type: 'info' })
+                              }}
+                            >
+                              🚫 Off
+                            </button>
+                          </div>
+                        </div>
+
+                        {settings.laserMode === 'manual' && (
+                          <div className="params-laser-levels">
+                            {ABLITERATION_LEVEL_ORDER.map((lvl) => {
+                              const meta = ABLITERATION_LEVELS[lvl]
+                              const isSel = (settings.laserLevelManual ?? 3) === lvl
+                              return (
+                                <button
+                                  key={lvl}
+                                  type="button"
+                                  className={`laser-level-pill ${isSel ? 'selected' : ''}`}
+                                  style={{ '--lvl-color': meta.color } as React.CSSProperties}
+                                  onClick={() => {
+                                    persist({ ...settings, laserMode: 'manual', laserLevelManual: lvl })
+                                    showToast(`Laser level: ${meta.label} (${meta.tag})`, { type: 'info' })
+                                  }}
+                                  title={`${meta.label} (${meta.tag}): ${meta.desc}`}
+                                >
+                                  <span className="lvl-dot" />
+                                  <span className="lvl-num">{lvl}</span>
+                                  <span className="lvl-name">{meta.label}</span>
+                                </button>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
-              </div>
-            </details>
-            <div className="composer-send-row">
-                <div className="composer-actions">
-                  {busy && (
-                    <button type="button" className="btn-stop" onClick={stop} title="Halt current execution">
-                      Stop
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className="primary composer-send-btn"
-                    onClick={() => void send()}
-                    disabled={busy || !input.trim()}
-                    title="Send (Enter)"
-                  >
-                    Send
-                  </button>
-                </div>
-              </div>
-            </div>
             </div>
           </div>
 
