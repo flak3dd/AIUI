@@ -82,10 +82,26 @@ function isOperatorLocalHost(hostname) {
   return hostname === '127.0.0.1' || hostname === 'localhost'
 }
 
+/** Build a Set of scheme+host+port origins from allowlist entries (ignore path/hash/trailing slash). */
+function listedOriginSet(origins) {
+  const listed = new Set()
+  for (const entry of origins || []) {
+    if (typeof entry !== 'string' || !entry) continue
+    try {
+      listed.add(new URL(entry).origin)
+    } catch {
+      // skip malformed allowlist entries
+    }
+  }
+  return listed
+}
+
 /**
  * Allowlist gate for browser_open / unattended navigation.
- * - mode "all": any http(s) public website hostname (no credentials; no private/loopback/etc.)
+ * - mode "all": any http(s) public website hostname, PLUS any origin explicitly listed
+ *   in allowlist.origins (including loopback/localhost; match scheme+host+port, ignore path/hash)
  * - mode "list" (default): exact origin must be in allowlist.origins
+ * - Still refuses file:, user:pass URLs, and unlisted private/loopback hosts
  * - operatorStarted: also allows localhost / 127.0.0.1 even when not listed
  */
 export function isOriginAllowlisted(url, allowlist, { operatorStarted = false } = {}) {
@@ -102,6 +118,9 @@ export function isOriginAllowlisted(url, allowlist, { operatorStarted = false } 
   const { mode, origins } = normalizeAllowlist(allowlist)
   const origin = parsed.origin
   const host = parsed.hostname
+  const listed = listedOriginSet(origins)
+
+  if (listed.has(origin)) return true
 
   if (mode === 'all') {
     if (isPublicWebsiteHostname(host)) return true
@@ -109,8 +128,6 @@ export function isOriginAllowlisted(url, allowlist, { operatorStarted = false } 
     return false
   }
 
-  const listed = new Set(origins || [])
-  if (listed.has(origin)) return true
   if (!operatorStarted) return false
   return isOperatorLocalHost(host)
 }

@@ -54,7 +54,7 @@ export interface CommandPaletteProps {
 interface PaletteAction {
   id: string
   title: string
-  category: 'Diagnostics' | 'Target' | 'Models' | 'Workspace' | 'Controls' | 'Memory' | 'Scaffolds' | 'Themes'
+  category: 'Diagnostics' | 'Target' | 'Models' | 'Workspace' | 'Controls' | 'Memory' | 'Scaffolds' | 'Themes' | 'Integrations'
   icon: string
   hint?: string
   badge?: string
@@ -436,6 +436,30 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         badge: mempalaceOnline ? 'ONLINE' : 'OFFLINE',
         run: onOpenSettings,
       }] : []),
+
+      {
+        id: 'int-squadswarm',
+        title: 'Open SquadSwarm',
+        category: 'Integrations' as const,
+        icon: '🐝',
+        hint: 'Cooperative work brokerage — Scope Board (sign-in required for scopes/docs)',
+        badge: 'LINK',
+        run: () => {
+          window.open('https://www.squadswarm.xyz/scopes', '_blank', 'noopener,noreferrer')
+          onClose()
+        },
+      },
+      {
+        id: 'int-squadswarm-about',
+        title: 'Open SquadSwarm About',
+        category: 'Integrations' as const,
+        icon: '🐝',
+        hint: 'Public about page — no API key; MCP/docs behind sign-in',
+        run: () => {
+          window.open('https://www.squadswarm.xyz/about', '_blank', 'noopener,noreferrer')
+          onClose()
+        },
+      },
 
       // Scaffolds (Catalog of 52 standardized templates)
       ...getAllScaffolds().map((scaffold) => ({

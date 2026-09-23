@@ -461,7 +461,7 @@ export function Composer(props: ComposerProps) {
                             type="button"
                             className="params-preset-pill"
                             onClick={() => {
-                              persist({ ...settings, temperature: 0.6, maxTokens: 8192 })
+                              persist({ ...settings, temperature: 0.6, maxTokens: 16384, agentMaxRounds: 48 })
                               showToast('Preset: Deep Reasoning (T: 0.6, 8k)', { type: 'info' })
                             }}
                           >
@@ -505,7 +505,7 @@ export function Composer(props: ComposerProps) {
                           <input
                             type="range"
                             min="1024"
-                            max="8192"
+                            max="16384"
                             step="512"
                             className="param-slider-input"
                             value={settings.maxTokens ?? 4096}
@@ -521,7 +521,7 @@ export function Composer(props: ComposerProps) {
                           <input
                             type="range"
                             min="1"
-                            max="20"
+                            max="64"
                             step="1"
                             className="param-slider-input"
                             value={settings.agentMaxRounds ?? 8}

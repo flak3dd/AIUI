@@ -82,6 +82,153 @@ export default defineConfig(async ({ mode }) => {
         },
       },
       {
+        name: 'agent-events',
+        configureServer(server: { middlewares: { use: (fn: unknown) => void } }) {
+          const events: { type: string; at: string; detail: unknown }[] = []
+          server.middlewares.use(async (req: IncomingMessage, res: ServerResponse, next: Connect.NextFunction) => {
+            if (!req.url?.startsWith('/api/agent-events')) return next()
+            if (!assertBrowserRunsLocal(req)) {
+              res.statusCode = 403
+              res.end('localhost only')
+              return
+            }
+            if (req.method === 'POST') {
+              const chunks: Buffer[] = []
+              for await (const chunk of req) chunks.push(Buffer.from(chunk))
+              let detail: unknown = {}
+              try {
+                detail = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
+              } catch {
+                detail = {}
+              }
+              const type = typeof (detail as { type?: string }).type === 'string' ? (detail as { type: string }).type : 'agent:event'
+              events.push({ type, at: new Date().toISOString(), detail })
+              if (events.length > 50) events.shift()
+              res.statusCode = 204
+              res.end()
+              return
+            }
+            res.statusCode = 200
+            res.setHeader('Content-Type', 'text/event-stream')
+            res.setHeader('Cache-Control', 'no-cache')
+            for (const event of events) {
+              res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+            }
+            res.end()
+          })
+        },
+      },
+      {
+        name: 'http-get-api',
+        configureServer(server: { middlewares: { use: (fn: unknown) => void } }) {
+          server.middlewares.use(async (req: IncomingMessage, res: ServerResponse, next: Connect.NextFunction) => {
+            if (req.method !== 'POST' || !req.url?.startsWith('/api/http-get')) return next()
+            if (!assertBrowserRunsLocal(req)) {
+              res.statusCode = 403
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ ok: false, error: 'http-get API is localhost-only' }))
+              return
+            }
+            const chunks: Buffer[] = []
+            for await (const chunk of req) chunks.push(Buffer.from(chunk))
+            let body: { url?: string } = {}
+            try {
+              body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
+            } catch {
+              res.statusCode = 400
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ ok: false, error: 'Invalid JSON' }))
+              return
+            }
+            const { httpGetJsonHandler } = await import('./scripts/aiui-agent/tools/handlers/utils.mjs')
+            const result = await httpGetJsonHandler({ url: body.url })
+            res.statusCode = 200
+            res.setHeader('Content-Type', 'application/json')
+            res.end(result)
+          })
+        },
+      },
+      {
+        name: 'pdf-ocr-api',
+        configureServer(server: { middlewares: { use: (fn: unknown) => void } }) {
+          server.middlewares.use(async (req: IncomingMessage, res: ServerResponse, next: Connect.NextFunction) => {
+            if (req.method !== 'POST' || !req.url?.startsWith('/api/pdf-ocr')) return next()
+            if (!assertBrowserRunsLocal(req)) {
+              res.statusCode = 403
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ ok: false, error: 'pdf-ocr API is localhost-only' }))
+              return
+            }
+            const chunks: Buffer[] = []
+            for await (const chunk of req) chunks.push(Buffer.from(chunk))
+            let body: { path?: string; maxPages?: number; forceOcr?: boolean } = {}
+            try {
+              body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
+            } catch {
+              res.statusCode = 400
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ ok: false, error: 'Invalid JSON' }))
+              return
+            }
+            const { extractPdf } = await import('./scripts/aiui-agent/tools/pdf-ocr.mjs')
+            const result = await extractPdf(body.path, { maxPages: body.maxPages, forceOcr: body.forceOcr })
+            res.statusCode = 200
+            res.setHeader('Content-Type', 'application/json')
+            res.end(JSON.stringify(result))
+          })
+        },
+      },
+      {
+        name: 'squad-support-api',
+        configureServer(server: { middlewares: { use: (fn: unknown) => void } }) {
+          // Seed Abliteration env from Vite loadEnv so the in-process queue uses the same keys as .env.example
+          if (env.VITE_ABLITERATION_API_KEY && !process.env.VITE_ABLITERATION_API_KEY) {
+            process.env.VITE_ABLITERATION_API_KEY = env.VITE_ABLITERATION_API_KEY
+          }
+          if (env.VITE_ABLITERATION_BASE_URL && !process.env.VITE_ABLITERATION_BASE_URL) {
+            process.env.VITE_ABLITERATION_BASE_URL = env.VITE_ABLITERATION_BASE_URL
+          }
+          if (env.VITE_ABLITERATION_MODEL && !process.env.VITE_ABLITERATION_MODEL) {
+            process.env.VITE_ABLITERATION_MODEL = env.VITE_ABLITERATION_MODEL
+          }
+          server.middlewares.use(async (req: IncomingMessage, res: ServerResponse, next: Connect.NextFunction) => {
+            if (req.method !== 'POST' || !req.url?.startsWith('/api/squad-support')) return next()
+            if (!assertBrowserRunsLocal(req)) {
+              res.statusCode = 403
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ ok: false, error: 'squad-support API is localhost-only' }))
+              return
+            }
+            const chunks: Buffer[] = []
+            for await (const chunk of req) chunks.push(Buffer.from(chunk))
+            let body: { action?: string; task?: string; context?: string; taskId?: string } = {}
+            try {
+              body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
+            } catch {
+              res.statusCode = 400
+              res.setHeader('Content-Type', 'application/json')
+              res.end(JSON.stringify({ ok: false, error: 'Invalid JSON' }))
+              return
+            }
+            const { squadEnqueueHandler, squadCollectHandler } = await import(
+              './scripts/aiui-agent/tools/squad-support.mjs'
+            )
+            const action = String(body.action || '').trim()
+            let raw: string
+            if (action === 'enqueue') {
+              raw = squadEnqueueHandler({ task: body.task, context: body.context })
+            } else if (action === 'collect') {
+              raw = squadCollectHandler({ taskId: body.taskId })
+            } else {
+              raw = JSON.stringify({ ok: false, error: 'action must be enqueue or collect' })
+            }
+            res.statusCode = 200
+            res.setHeader('Content-Type', 'application/json')
+            res.end(raw)
+          })
+        },
+      },
+      {
         name: 'agent-runs-api',
         configureServer(server: { middlewares: { use: (fn: unknown) => void } }) {
           server.middlewares.use(async (req: IncomingMessage, res: ServerResponse, next: Connect.NextFunction) => {

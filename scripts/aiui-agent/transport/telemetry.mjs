@@ -8,8 +8,8 @@ import {
   MEMPALACE_URL,
   CLOUD_KEY_PROXY_URL,
   SSH_KEY,
-  SPARK_HOST,
   SPARK_USER,
+  getSparkSshHost,
   isRunningOnSpark,
   loadOptimizerPolicy,
 } from '../config.mjs';
@@ -55,11 +55,16 @@ export async function checkServices() {
   } else {
     try {
       const t0 = performance.now();
-      const { stdout } = await execP(
-        `ssh -o BatchMode=yes -o ConnectTimeout=3 -o StrictHostKeyChecking=no -i ${SSH_KEY} ${SPARK_USER}@${SPARK_HOST} "hostname"`,
-        { timeout: 4000 }
-      );
-      status.sparkSsh = { ok: stdout.trim().length > 0, ms: Math.round(performance.now() - t0) };
+      const { host: sparkSshHost, bothRefused } = await getSparkSshHost();
+      if (bothRefused) {
+        status.sparkSsh = { ok: false, ms: Math.round(performance.now() - t0) };
+      } else {
+        const { stdout } = await execP(
+          `ssh -o BatchMode=yes -o ConnectTimeout=3 -o StrictHostKeyChecking=no -i ${SSH_KEY} ${SPARK_USER}@${sparkSshHost} "hostname"`,
+          { timeout: 4000 }
+        );
+        status.sparkSsh = { ok: stdout.trim().length > 0, ms: Math.round(performance.now() - t0) };
+      }
     } catch {}
   }
 

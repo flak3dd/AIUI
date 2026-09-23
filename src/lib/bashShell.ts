@@ -344,8 +344,12 @@ export async function executeBashCommand(
   // Preflight sanitization: Resolve verification gates, strip assertion suffixes, and add package.json guard
   const sanitizedCmd = resolveVerificationGateCommand(trimmed);
 
-  // Enforce zero host execution: All workspace execution runs strictly on DGX Spark sandbox
-  const safeTarget: ExecutionTarget = target === 'local_mac' ? 'dgx_spark' : target;
+  // Mac paths and an explicit local_mac target run on this machine.
+  // Rewriting them to dgx_spark sends them through SSH to a LAN address that refuses port 22.
+  const macPath = /\/Users\//.test(sanitizedCmd);
+  const sparkOnly = /nvidia-smi|\/mnt\/nvme|\/tmp\/spark-sandboxes/.test(sanitizedCmd);
+  const safeTarget: ExecutionTarget =
+    (macPath || target === 'local_mac') && !sparkOnly ? 'local_mac' : target === 'local_mac' ? 'dgx_spark' : target;
   const effectiveEnvId = envId && envId !== 'web_session' ? envId : getActiveWorkspaceEnvId();
   let workingDir = cwd || getStoredWorkspaceDir(safeTarget);
   // Guarantee sandbox path boundary: remap any Mac host path or escape attempts into /tmp/spark-sandboxes/workspaceN

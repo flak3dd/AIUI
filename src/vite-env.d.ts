@@ -6,6 +6,7 @@ interface ImportMetaEnv {
   readonly VITE_FEATHERLESS_API_KEY: string
   readonly VITE_ABLITERATION_BASE_URL: string
   readonly VITE_ABLITERATION_API_KEY: string
+  readonly VITE_ABLITERATION_MODEL: string
   readonly VITE_SPARK_HOST: string
   readonly VITE_SPARK_PORT: string
   readonly VITE_SPARK_USE_PROXY: string

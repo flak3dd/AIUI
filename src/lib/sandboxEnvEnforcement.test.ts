@@ -94,9 +94,15 @@ test('Sandbox Agent Tools: schemas specify isolated DGX Spark sandbox', () => {
 
   const writeTool = AGENT_TOOLS.find((t) => t.function.name === 'write_file')
   assert.ok(writeTool)
-  assert.ok(writeTool.function.description.includes('sandbox workspace'))
+  // write_file top-level description focuses on create/overwrite; sandbox is on the target param
+  const writeParams = JSON.stringify(writeTool.function.parameters ?? {})
+  assert.ok(
+    writeParams.includes('DGX sandbox') || writeTool.function.description.includes('sandbox'),
+    'write_file must advertise DGX sandbox as the default target',
+  )
 
   const readTool = AGENT_TOOLS.find((t) => t.function.name === 'read_file')
   assert.ok(readTool)
   assert.ok(readTool.function.description.includes('sandbox workspace'))
 })
+

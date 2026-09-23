@@ -59,7 +59,9 @@ export async function callLlm(messages, ctx) {
     ? parseInt(process.env.SPARK_MAX_MODEL_LEN || process.env.CTX, 10) || 32768
     : 131072; // Featherless cloud supports 128k context natively
   const maxHeadroom = maxModelLen - approxInputTokens - 64;
-  const safeMaxTokens = Math.max(256, Math.min(4096, maxHeadroom));
+  const thinkingOn = process.env.AIUI_ENABLE_THINKING !== '0';
+  const tokenCap = thinkingOn ? 16384 : 8192;
+  const safeMaxTokens = Math.max(256, Math.min(tokenCap, maxHeadroom));
 
   // Transport-level invariant: Ensure at least one valid 'user' message exists for vLLM qwen3_coder tool parser
   const validatedMessages = [...messages];
@@ -84,7 +86,7 @@ export async function callLlm(messages, ctx) {
     max_tokens: safeMaxTokens,
     presence_penalty: 0.1,
     frequency_penalty: 0.1,
-    ...(isSpark ? { chat_template_kwargs: { enable_thinking: false } } : {}),
+    ...(isSpark ? { chat_template_kwargs: { enable_thinking: thinkingOn } } : {}),
   };
 
   const headers = {
@@ -235,7 +237,7 @@ export async function callLlm(messages, ctx) {
     const cloudPayload = {
       ...payload,
       model: cloudModel,
-      max_tokens: Math.min(safeMaxTokens, 4096),
+      max_tokens: Math.min(safeMaxTokens, 8192),
     };
     delete cloudPayload.chat_template_kwargs;
 

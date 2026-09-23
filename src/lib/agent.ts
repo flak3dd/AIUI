@@ -21,6 +21,8 @@ import { MemoryPalace, searchMemory, checkpointMemory } from './mempalace.ts'
 import { getAllScaffolds, getScaffoldFiles } from './scaffoldTemplates.ts'
 import { formatAIUIResponse } from './devinResponseFormatter.ts'
 import { isTurnBrowserCueActive, WORD_CUE_SYSTEM_RULE } from './wordCues.ts'
+import { fetchSquadswarmStatusViaHttpGetProxy } from './squadswarm.ts'
+import { squadCollectViaProxy, squadEnqueueViaProxy } from './squadSupport.ts'
 import {
   MISSING_TOOL_ACQUISITION_RULE,
   autoAcquireMissingTool,
@@ -76,7 +78,7 @@ export const AGENT_TOOLS = [
     function: {
       name: 'write_file',
       description:
-        'Write or overwrite a file in the sandbox workspace (DGX Spark). Essential for creating scripts, writing tests, or applying code fixes during self-healing.',
+        'Create a new file or completely overwrite an existing file. For existing files, prefer replace_file_content for surgical edits.',
       parameters: {
         type: 'object',
         properties: {
@@ -102,6 +104,23 @@ export const AGENT_TOOLS = [
   {
     type: 'function',
     function: {
+      name: 'pdf_ocr',
+      description:
+        'Read a local PDF on this Mac with pymupdf4llm.to_markdown. Returns Markdown plus pageCount; OCRs sparse pages. Use this instead of bash or SSH for .pdf files.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Absolute path to a .pdf file on this Mac' },
+          maxPages: { type: 'number' },
+          forceOcr: { type: 'boolean' },
+        },
+        required: ['path'],
+      },
+    },
+  },
+  {
+    type: 'function' as const,
+    function: {
       name: 'read_file',
       description:
         'Read the contents of a file in the sandbox workspace (DGX Spark). Use to inspect existing code, verify edits, or read error logs.',
@@ -119,6 +138,259 @@ export const AGENT_TOOLS = [
           },
         },
         required: ['path'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'replace_file_content',
+      description:
+        'Surgically replace an exact, unique block of code within a file without modifying the rest. Prefer this over write_file for existing files.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Target file path' },
+          target: { type: 'string', description: 'Exact character sequence to replace (must be unique)' },
+          replacement: { type: 'string', description: 'Replacement code' },
+        },
+        required: ['path', 'target', 'replacement'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'multi_replace_file_content',
+      description: 'Atomically apply multiple surgical code replacements to a file in one transaction.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Target file path' },
+          replacements: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                target: { type: 'string' },
+                replacement: { type: 'string' },
+              },
+              required: ['target', 'replacement'],
+            },
+          },
+        },
+        required: ['path', 'replacements'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'grep_search',
+      description: 'Fast code search using ripgrep. Supports regex, glob filters, and path scoping.',
+      parameters: {
+        type: 'object',
+        properties: {
+          pattern: { type: 'string', description: 'Search pattern (regex or literal)' },
+          path: { type: 'string', description: 'Directory or file to search (default: workspace)' },
+          glob: { type: 'string', description: 'Glob filter (e.g. *.ts)' },
+          case_sensitive: { type: 'boolean' },
+          max_results: { type: 'number' },
+        },
+        required: ['pattern'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_file_outline',
+      description: 'Extract function, class, interface, and type signatures with line numbers.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Path to source file' },
+        },
+        required: ['path'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'start_daemon',
+      description: 'Start a long-running background process with optional port readiness polling.',
+      parameters: {
+        type: 'object',
+        properties: {
+          command: { type: 'string' },
+          id: { type: 'string' },
+          port: { type: 'number' },
+          cwd: { type: 'string' },
+        },
+        required: ['command', 'id'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_daemon_logs',
+      description: 'Read trailing log lines from a running background daemon.',
+      parameters: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          lines: { type: 'number' },
+        },
+        required: ['id'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'stop_daemon',
+      description: 'Stop a running background daemon.',
+      parameters: {
+        type: 'object',
+        properties: { id: { type: 'string' } },
+        required: ['id'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_daemons',
+      description: 'List running background daemons, PIDs, uptime, and ports.',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'nl_automate',
+      description:
+        'Natural-language browser task on the allowlisted local studio. Requires the word cue "automate" in the user prompt.',
+      parameters: {
+        type: 'object',
+        properties: {
+          instruction: { type: 'string', description: 'Plain-language browser task' },
+        },
+        required: ['instruction'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_open',
+      description: 'Open a visible Chrome window (Playwright) and navigate to a URL. Requires word cue "automate".',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string' },
+          headless: { type: 'boolean' },
+        },
+        required: ['url'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_screenshot',
+      description: 'Capture a PNG screenshot of the active browser page.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string' },
+          fullPage: { type: 'boolean' },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_click',
+      description: 'Click an element on the active browser page by CSS selector.',
+      parameters: {
+        type: 'object',
+        properties: { selector: { type: 'string' } },
+        required: ['selector'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_type',
+      description: 'Type text into an input on the active browser page.',
+      parameters: {
+        type: 'object',
+        properties: {
+          selector: { type: 'string' },
+          text: { type: 'string' },
+        },
+        required: ['selector', 'text'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'browser_console_logs',
+      description: 'Get browser console logs, exceptions, and network errors.',
+      parameters: {
+        type: 'object',
+        properties: {
+          level: { type: 'string', enum: ['error', 'warn', 'info', 'all'] },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'spawn_subagent',
+      description: 'Delegate a focused objective to an isolated subagent (recon, coder, browser_qa).',
+      parameters: {
+        type: 'object',
+        properties: {
+          role: { type: 'string', enum: ['recon', 'coder', 'browser_qa'] },
+          objective: { type: 'string' },
+          target_files: { type: 'array', items: { type: 'string' } },
+          max_rounds: { type: 'number' },
+        },
+        required: ['role', 'objective'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'hand_off_run',
+      description: 'Hand the current run to n8n so it continues after this chat closes.',
+      parameters: {
+        type: 'object',
+        properties: { runId: { type: 'string' } },
         additionalProperties: false,
       },
     },
@@ -150,6 +422,51 @@ export const AGENT_TOOLS = [
           url: { type: 'string' },
         },
         required: ['url'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'squadswarm_status',
+      description:
+        'Check SquadSwarm public health (GET /api/health) and return official public URLs (home, about, scopes, docs, login). Scope Board and Docs require sign-in — no public API key. Prefer this over inventing SquadSwarm endpoints.',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'squad_enqueue',
+      description:
+        'Hand a heavy task (+ optional context) to the async Abliteration.ai support model (larger cloud model). Returns a taskId immediately so local Spark vLLM can keep working. Cap ~100k chars in. Do not send .env, API keys, passwords, or /Users secrets. Local bash/file edits stay local.',
+      parameters: {
+        type: 'object',
+        properties: {
+          task: { type: 'string', description: 'What the support model should do' },
+          context: {
+            type: 'string',
+            description: 'Optional large slice (logs, plan, pasted text) — not secrets',
+          },
+        },
+        required: ['task'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'squad_collect',
+      description:
+        'Poll an Abliteration support task by taskId. Returns pending until done, then a compact result (≤~8k chars). Non-blocking — keep doing local work while pending.',
+      parameters: {
+        type: 'object',
+        properties: {
+          taskId: { type: 'string', description: 'Id returned by squad_enqueue' },
+        },
+        required: ['taskId'],
         additionalProperties: false,
       },
     },
@@ -387,6 +704,48 @@ export function invalidateFileCache() {
   fileReadCache.clear()
 }
 
+const CLI_PROXY_TOOLS = new Set([
+  'replace_file_content',
+  'multi_replace_file_content',
+  'grep_search',
+  'get_file_outline',
+  'start_daemon',
+  'read_daemon_logs',
+  'stop_daemon',
+  'list_daemons',
+  'nl_automate',
+  'spawn_subagent',
+  'hand_off_run',
+  'ssh',
+  'base64',
+  'web_unblocker',
+])
+
+async function proxyCliTool(name: string, args: Record<string, unknown>): Promise<string> {
+  try {
+    const res = await fetch('/api/agent-runs/tool', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, arguments: args }),
+    })
+    const text = await res.text()
+    try {
+      const parsed = JSON.parse(text)
+      if (parsed && typeof parsed === 'object' && !('ok' in parsed)) {
+        parsed.ok = res.ok
+      }
+      return JSON.stringify(parsed)
+    } catch {
+      return text
+    }
+  } catch (err) {
+    return JSON.stringify({
+      ok: false,
+      error: err instanceof Error ? err.message : `${name} proxy failed`,
+    })
+  }
+}
+
 export async function runTool(
   name: string,
   argsJson: string,
@@ -437,6 +796,13 @@ export async function runTool(
     }
   }
 
+  if (CLI_PROXY_TOOLS.has(name)) {
+    if (name === 'replace_file_content' || name === 'multi_replace_file_content') {
+      invalidateFileCache()
+    }
+    return proxyCliTool(name, args)
+  }
+
   if (name === 'bash' || name === 'exec') {
     const cmd = String(args.command || args.cmd || '').trim()
     if (!cmd) {
@@ -451,6 +817,8 @@ export async function runTool(
     }
     return JSON.stringify({
       ok: res.ok,
+      cached: false,
+      executedAt: new Date().toISOString(),
       exitCode: res.exitCode,
       target: res.target,
       durationMs: res.durationMs,
@@ -506,6 +874,25 @@ export async function runTool(
       exitCode: res.exitCode,
       error: res.error || (res.ok ? undefined : res.stderr),
     })
+  }
+
+  if (name === 'pdf_ocr') {
+    const filePath = String(args.path || '').trim()
+    try {
+      const res = await fetch('/api/pdf-ocr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          path: filePath,
+          maxPages: args.maxPages,
+          forceOcr: args.forceOcr,
+        }),
+      })
+      const text = await res.text()
+      return text
+    } catch (err) {
+      return JSON.stringify({ ok: false, error: err instanceof Error ? err.message : 'pdf_ocr failed' })
+    }
   }
 
   if (name === 'read_file') {
@@ -635,17 +1022,39 @@ export async function runTool(
 
   if (name === 'http_get_json') {
     const url = String(args.url || '')
-    if (!/^https:\/\//i.test(url)) {
-      return JSON.stringify({ ok: false, error: 'Only https:// URLs allowed' })
+    try {
+      const res = await fetch('/api/http-get', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      })
+      return await res.text()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'http_get_json failed'
+      return JSON.stringify({
+        ok: false,
+        error: message.includes('NetworkError') || message.includes('Failed to fetch') || message.includes('Load failed')
+          ? 'The browser could not reach /api/http-get. Restart the Studio dev server and try again.'
+          : message,
+      })
     }
-    const res = await fetch(url, { headers: { Accept: 'application/json,text/plain,*/*' } })
-    const text = await res.text()
-    return JSON.stringify({
-      ok: res.ok,
-      status: res.status,
-      body: text.slice(0, 4000),
-      truncated: text.length > 4000,
-    })
+  }
+
+  if (name === 'squadswarm_status') {
+    return JSON.stringify(await fetchSquadswarmStatusViaHttpGetProxy())
+  }
+
+  if (name === 'squad_enqueue') {
+    return JSON.stringify(
+      await squadEnqueueViaProxy({
+        task: String(args.task || ''),
+        context: args.context != null ? String(args.context) : undefined,
+      }),
+    )
+  }
+
+  if (name === 'squad_collect') {
+    return JSON.stringify(await squadCollectViaProxy({ taskId: String(args.taskId || '') }))
   }
 
   if (name === 'spawn_linux_container') {
@@ -896,10 +1305,14 @@ export interface ApplyToolsResult {
 
 const READ_ONLY_TOOLS = new Set([
   'read_file',
+  'pdf_ocr',
   'now',
   'memory_search',
   'list_models',
   'http_get_json',
+  'squadswarm_status',
+  'squad_enqueue',
+  'squad_collect',
   'list_linux_containers',
   'list_scaffolds',
 ])
@@ -908,16 +1321,26 @@ const READ_ONLY_TOOLS = new Set([
  * Curate tool/bash dumps for the next model turn: keep signal (head + tail),
  * drop middle noise, and hard-cap chars so context stays diagnosis-friendly.
  */
+const OFFLOAD_HINT =
+  'Omitted bulk stays out of local context. Use squad_enqueue with a specific question and a short excerpt; do not paste the omitted text back.'
+
+function withOffloadHint(body: string): string {
+  if (body.includes('squad_enqueue')) return body
+  return `${body}\n${OFFLOAD_HINT}`
+}
+
 export function formatToolOutputForContext(text: string, maxChars = 3500): string {
   if (!text) return text
 
   let curated = text
+  let omittedBulk = false
   const lines = text.split('\n')
   const MAX_LINES = 80
   if (lines.length > MAX_LINES) {
     const headN = 20
     const tailN = 60
     const omitted = lines.length - headN - tailN
+    omittedBulk = true
     curated = [
       ...lines.slice(0, headN),
       '',
@@ -927,12 +1350,29 @@ export function formatToolOutputForContext(text: string, maxChars = 3500): strin
     ].join('\n')
   }
 
-  if (curated.length <= maxChars) return curated
+  if (curated.length <= maxChars) return omittedBulk ? withOffloadHint(curated) : curated
   const half = Math.floor((maxChars - 160) / 2)
   const head = curated.slice(0, half)
   const tail = curated.slice(curated.length - half)
   const omitted = curated.length - (head.length + tail.length)
-  return `${head}\n\n... [${omitted} characters truncated for context quality] ...\n\n${tail}`
+  return withOffloadHint(`${head}\n\n... [${omitted} characters truncated for context quality] ...\n\n${tail}`)
+}
+
+/** Shrink tool results from earlier rounds so the local model keeps room for the live step. */
+export function compactHistoricToolMessages(messages: ChatMessage[]): ChatMessage[] {
+  if (messages.length < 8) return messages
+  const thresholdIdx = messages.length - 4
+  return messages.map((msg, idx) => {
+    if (idx < thresholdIdx && msg.role === 'tool' && typeof msg.content === 'string' && msg.content.length > 300) {
+      const lines = msg.content.split('\n').filter(Boolean)
+      const firstLine = (lines[0] || '').slice(0, 100)
+      return {
+        ...msg,
+        content: `[Historical Tool Output Verified & Compacted]: "${firstLine}..." (${lines.length} lines archived from earlier round)`,
+      }
+    }
+    return msg
+  })
 }
 
 export type ApplyToolCallsOptions = {
@@ -1047,10 +1487,18 @@ If the user asks you to run or change something and Agent Mode is off, explain t
 
 export const AGENT_SYSTEM = `You are Abliterated AI in Agent Mode — an autonomous systems engineer with live tools.
 
-Tools: bash, write_file, read_file, replace_file_content, multi_replace_file_content, grep_search, get_file_outline, start_daemon, read_daemon_logs, stop_daemon, list_daemons, nl_automate, browser_open, browser_screenshot, browser_click, browser_type, browser_console_logs, spawn_subagent, hand_off_run, list_models, http_get_json, now, memory_search, memory_checkpoint, spawn_linux_container, destroy_linux_container, list_linux_containers, list_scaffolds, apply_scaffold, set_workspace_dir, get_workspace_dir, ssh, base64, research_and_acquire_tool.
-Use nl_automate for a plain-language browser task on the local studio, such as opening Settings or reading the Health list — but only when the user said the word cue "automate".
+Tools: bash, pdf_ocr, write_file, read_file, replace_file_content, multi_replace_file_content, grep_search, get_file_outline, start_daemon, read_daemon_logs, stop_daemon, list_daemons, nl_automate, browser_open, browser_screenshot, browser_click, browser_type, browser_console_logs, spawn_subagent, hand_off_run, list_models, http_get_json, squadswarm_status, squad_enqueue, squad_collect, now, memory_search, memory_checkpoint, spawn_linux_container, destroy_linux_container, list_linux_containers, list_scaffolds, apply_scaffold, set_workspace_dir, get_workspace_dir, ssh, base64, research_and_acquire_tool.
+IMPORTANT: Tool names (grep_search, replace_file_content, read_file, write_file, get_file_outline, start_daemon, …) are NATIVE AGENT TOOLS, not shell commands. Never run tool names inside bash — invoke them via native function/tool calling.
+Use nl_automate for a plain-language browser task on the local studio — only when the user said the word cue "automate".
 Prefer native tool_calls. Only use <run>command</run> or fenced bash when tools are unavailable.
-Never fabricate stdout/stderr — only trust real tool results.
+Never fabricate stdout/stderr — only trust real tool results. Bash results are fresh executions (cached: false, with executedAt); never claim they are cached or old.
+Async support: when the user task or pasted context is large, or the command plan is long, call squad_enqueue with that heavy slice (returns taskId immediately), keep doing local bash/file work, then squad_collect for the compact result. Do not send .env, API keys, passwords, or /Users secrets. Local Spark vLLM is the orchestrator; Abliteration runs offloads in the background.
+
+Surgical edit & proof-of-work laws:
+1. Prefer grep_search / get_file_outline for discovery. Do not re-read a file already in context.
+2. For existing files, use replace_file_content (or multi_replace_file_content). write_file is ONLY for brand-new files — never overwrite whole existing files.
+3. After any file edit, your next action must be bash verification that exits 0 (tests, compile, or targeted check). Include that command and git diff --stat before claiming done.
+4. Required loop: grep_search → replace_file_content → bash (exit 0). Forbidden: repeated read_file → write_file whole-file dumps.
 
 Rules & Output Directives:
 1. Dotpoint Thinking Logic: When formulating reasoning (e.g. inside <think> tags), structure thoughts as concise dotpoints:
@@ -1062,7 +1510,7 @@ Rules & Output Directives:
 4. Fix-verify loop: on failure inspect → change approach → re-run. Never repeat the same failing command unchanged.
 5. Anti-loop: no repeated preambles or identical answers; pivot when stuck.
 6. Memory: memory_search before guessing past project context; checkpoint meaningful outcomes.
-7. When done: return a compact dotpoint summary: what changed, evidence (exit codes, paths), and status.
+7. When done: return a compact dotpoint summary: what changed, evidence (exit codes, paths), and status. If you modified a file, you may not finish until a bash verification command has exited 0 since that edit. Include that command and git diff --stat.
 8. Before browser_open, state the full URL. Unattended opens only succeed for origins on the allowlist.
 9. ${WORD_CUE_SYSTEM_RULE}
 10. ${MISSING_TOOL_ACQUISITION_RULE}

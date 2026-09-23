@@ -41,6 +41,18 @@ describe('durable browser proof', () => {
     assert.equal(isOriginAllowlisted('https://www.example.com/path', all), true)
   })
 
+  it('mode all allows explicitly listed loopback origins (path/slash ignored)', () => {
+    const all = {
+      mode: 'all',
+      origins: ['http://127.0.0.1:5173', 'http://localhost:5173/', 'http://127.0.0.1:5175'],
+    }
+    assert.equal(isOriginAllowlisted('http://127.0.0.1:5173', all), true)
+    assert.equal(isOriginAllowlisted('http://127.0.0.1:5173/', all), true)
+    assert.equal(isOriginAllowlisted('http://127.0.0.1:5173/app?x=1#hash', all), true)
+    assert.equal(isOriginAllowlisted('http://localhost:5173/', all), true)
+    assert.equal(isOriginAllowlisted('http://127.0.0.1:5175/x', all), true)
+  })
+
   it('mode all rejects private loopback and non-http(s)', () => {
     const all = { mode: 'all', origins: ['http://127.0.0.1:5173'] }
     assert.equal(isOriginAllowlisted('http://127.0.0.1:9999', all), false)

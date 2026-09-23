@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "updatedAt": 1790124019776,
+  "updatedAt": 1790152243298,
   "tools": {
     "sqlite_query": {
       "name": "sqlite_query",
@@ -184,8 +184,8 @@
       "installedAt": 1790108003722,
       "verified": true,
       "enabled": true,
-      "usageCount": 7,
-      "lastUsedAt": 1790124019776
+      "usageCount": 8,
+      "lastUsedAt": 1790152243298
     },
     "cve_lookup": {
       "name": "cve_lookup",

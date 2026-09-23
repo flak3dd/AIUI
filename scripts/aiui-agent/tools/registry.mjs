@@ -101,6 +101,24 @@ export const tools = [
   {
     type: 'function',
     function: {
+      name: 'pdf_ocr',
+      description:
+        'Read a local PDF on this Mac with pymupdf4llm.to_markdown. Returns GitHub-compatible Markdown plus pageCount. OCRs sparse pages when needed. Never use bash or SSH for PDFs; never send PDFs to remote hosts.',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Absolute path to a .pdf file on this Mac' },
+          maxPages: { type: 'number', description: 'Max pages to return (default 20, cap 40)' },
+          forceOcr: { type: 'boolean', description: 'OCR every page, not only sparse ones' },
+        },
+        required: ['path'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'read_file',
       description: 'Read the contents of a file. Returns line numbers. Supply start_line and line_count for targeted reading.',
       parameters: {
@@ -388,6 +406,51 @@ export const tools = [
         type: 'object',
         properties: { url: { type: 'string' } },
         required: ['url'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'squadswarm_status',
+      description:
+        'Check SquadSwarm public health (GET https://www.squadswarm.xyz/api/health) and return official public URLs. Scope Board and Docs require sign-in — no public API key.',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'squad_enqueue',
+      description:
+        'Hand a heavy task (+ optional context) to the async Abliteration.ai support model (larger cloud model). Returns a taskId immediately so local Spark vLLM can keep working. Cap ~100k chars in. Do not send .env, API keys, passwords, or /Users secrets. Local bash/file edits stay local.',
+      parameters: {
+        type: 'object',
+        properties: {
+          task: { type: 'string', description: 'What the support model should do' },
+          context: {
+            type: 'string',
+            description: 'Optional large slice (logs, plan, pasted text) — not secrets',
+          },
+        },
+        required: ['task'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'squad_collect',
+      description:
+        'Poll an Abliteration support task by taskId. Returns pending until done, then a compact result (≤~8k chars). Non-blocking — keep doing local work while pending.',
+      parameters: {
+        type: 'object',
+        properties: {
+          taskId: { type: 'string', description: 'Id returned by squad_enqueue' },
+        },
+        required: ['taskId'],
         additionalProperties: false,
       },
     },

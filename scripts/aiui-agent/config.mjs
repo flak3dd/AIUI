@@ -2,6 +2,13 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import {
+  probeTcpPort,
+  resolveSparkSshHost,
+  resetSparkSshHostCache,
+  getCachedSparkSshHost,
+  sparkSshBothHostsRefused,
+} from './transport/spark-ssh-host.mjs';
 
 // Attempt to load ~/.aiuirc if environment variables are not pre-set
 try {
@@ -89,6 +96,26 @@ export const SPARK_HOST = process.env.SPARK_HOST || '100.66.147.53';
 export const SPARK_QWEN_HOST = process.env.SPARK_QWEN_HOST || '192.168.4.103';
 export const SPARK_TAILSCALE_HOST = '100.66.147.53';
 export const SPARK_USER = process.env.SPARK_USER || 'flak3dd';
+
+export {
+  probeTcpPort,
+  resolveSparkSshHost,
+  resetSparkSshHostCache,
+  getCachedSparkSshHost,
+  sparkSshBothHostsRefused,
+};
+
+/**
+ * Effective Spark SSH host: configured SPARK_HOST, with one Tailscale
+ * fallback when LAN:22 is ECONNREFUSED. Caches after the first resolve.
+ */
+export async function getSparkSshHost(options = {}) {
+  return resolveSparkSshHost({
+    ...options,
+    configuredHost: options.configuredHost ?? SPARK_HOST,
+    fallbackHost: options.fallbackHost ?? SPARK_TAILSCALE_HOST,
+  });
+}
 
 /** Chat completion URLs for the Spark vLLM switch. SPARK_ROUTE=lan|tailscale|both (default both). */
 export function sparkVllmChatUrls() {

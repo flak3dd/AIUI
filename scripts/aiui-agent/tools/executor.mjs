@@ -4,6 +4,7 @@ import { rgb, c } from '../ui/skins.mjs';
 
 import { bashToolHandler, sshToolHandler } from './handlers/bash.mjs';
 import { readFileHandler, writeFileHandler } from './handlers/fs.mjs';
+import { pdfOcrHandler } from './pdf-ocr.mjs';
 import {
   replaceFileContentHandler,
   multiReplaceFileContentHandler,
@@ -43,6 +44,8 @@ import {
   nowHandler,
   base64Handler,
 } from './handlers/utils.mjs';
+import { squadswarmStatusHandler } from './squadswarm.mjs';
+import { squadEnqueueHandler, squadCollectHandler } from './squad-support.mjs';
 import {
   setWorkspaceDirHandler,
   getWorkspaceDirHandler,
@@ -127,6 +130,10 @@ export async function executeTool(name, argsJson, ctx = {}) {
 
   if (name === 'read_file') {
     return await readFileHandler(args, ctx);
+  }
+
+  if (name === 'pdf_ocr') {
+    return await pdfOcrHandler(args);
   }
 
   // Persistent Daemons & Background Process Supervisor (Pillar 3)
@@ -216,6 +223,18 @@ export async function executeTool(name, argsJson, ctx = {}) {
 
   if (name === 'http_get_json') {
     return await httpGetJsonHandler(args);
+  }
+
+  if (name === 'squadswarm_status') {
+    return await squadswarmStatusHandler();
+  }
+
+  if (name === 'squad_enqueue') {
+    return squadEnqueueHandler(args);
+  }
+
+  if (name === 'squad_collect') {
+    return squadCollectHandler(args);
   }
 
   if (name === 'now') {

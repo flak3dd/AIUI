@@ -1,0 +1,22 @@
+{
+  "id": "run-1790142466875",
+  "goal": "automate betzillo signup",
+  "status": "running",
+  "steps": [
+    {
+      "tool": "nl_automate",
+      "ok": false,
+      "exitCode": null,
+      "result": "{\"ok\":false,\"text\":\"Origin not allowlisted: http://127.0.0.1:5173. Add it before unattended navigation.\",\"steps\":[{\"action\":\"open\",\"ok\":false,\"detail\":\"Origin not allowlisted: http://127.0.0.1:5173. Add it before unattended navigation.\"}]}",
+      "at": "2026-09-23T05:47:49.269Z"
+    }
+  ],
+  "filesTouched": [],
+  "lastCommand": "",
+  "browserRunId": null,
+  "milestones": [],
+  "children": [],
+  "checkpoint": null,
+  "finishedAt": null,
+  "updatedAt": "2026-09-23T05:47:49.269Z"
+}

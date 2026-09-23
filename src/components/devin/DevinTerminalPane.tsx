@@ -39,13 +39,61 @@ export const DevinTerminalPane: React.FC<DevinTerminalPaneProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'terminal' | 'daemons'>('terminal');
   const [termInput, setTermInput] = useState('');
+  const [streamed, setStreamed] = useState<BashExecResult[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let stop = false
+    const pull = async () => {
+      try {
+        const res = await fetch('/api/agent-events')
+        if (!res.ok || stop) return
+        const text = await res.text()
+        const next: BashExecResult[] = []
+        for (const block of text.split('\n\n')) {
+          const dataLine = block.split('\n').find((line) => line.startsWith('data: '))
+          if (!dataLine) continue
+          const event = JSON.parse(dataLine.slice(6)) as {
+            type?: string
+            detail?: { command?: string; exitCode?: number; stdout?: string; stderr?: string }
+          }
+          if (event.type !== 'agent:terminal_chunk' || !event.detail?.command) continue
+          next.push({
+            ok: event.detail.exitCode === 0,
+            command: event.detail.command,
+            stdout: event.detail.stdout || '',
+            stderr: event.detail.stderr || '',
+            exitCode: event.detail.exitCode ?? 1,
+            durationMs: 0,
+            target,
+          })
+        }
+        if (!stop) setStreamed(next.slice(-30))
+      } catch {
+        /* event channel is optional */
+      }
+    }
+    void pull()
+    const timer = window.setInterval(() => void pull(), 2000)
+    return () => {
+      stop = true
+      window.clearInterval(timer)
+    }
+  }, [target]);
+
+  const visibleLogs = [...logs]
+  for (const row of streamed) {
+    const seen = visibleLogs.some(
+      (log) => log.command === row.command && log.exitCode === row.exitCode && log.stdout === row.stdout,
+    )
+    if (!seen) visibleLogs.push(row)
+  }
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [logs]);
+  }, [visibleLogs]);
 
   const handleCommandSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -70,7 +118,7 @@ export const DevinTerminalPane: React.FC<DevinTerminalPaneProps> = ({
             className={`devin-tab-btn ${activeTab === 'terminal' ? 'active' : ''}`}
             onClick={() => setActiveTab('terminal')}
           >
-            Output ({logs.length})
+            Output ({visibleLogs.length})
           </button>
           <button
             type="button"
@@ -132,7 +180,7 @@ export const DevinTerminalPane: React.FC<DevinTerminalPaneProps> = ({
           </div>
         ) : (
           <div className="devin-terminal-stream">
-            {logs.length === 0 ? (
+            {visibleLogs.length === 0 ? (
               <div className="devin-terminal-empty">
                 <div className="term-empty-icon">💻</div>
                 <div className="term-empty-title">PTY STREAM INITIALIZED · TARGET: {target.toUpperCase()}</div>
@@ -147,7 +195,7 @@ export const DevinTerminalPane: React.FC<DevinTerminalPaneProps> = ({
                 )}
               </div>
             ) : (
-              logs.map((log, idx) => {
+              visibleLogs.map((log, idx) => {
                 const isExitZero = log.exitCode === 0;
                 const isGitRepoError =
                   (log.stderr && log.stderr.includes('not a git repository')) ||

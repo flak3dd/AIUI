@@ -1,0 +1,36 @@
+{
+  "id": "run-1790152078123",
+  "goal": "run a range scan on aws server",
+  "status": "running",
+  "steps": [
+    {
+      "tool": "ssh",
+      "ok": false,
+      "exitCode": 255,
+      "result": "{\"ok\":false,\"command\":\"echo \\\"SSH host:\\\"; hostname; cat /etc/hosts | head -5\",\"host\":\"spark\",\"user\":\"flak3dd\",\"port\":22,\"stdout\":\"\",\"stderr\":\"ssh: Could not resolve hostname spark: nodename nor servname provided, or not known\",\"exitCode\":255,\"durationMs\":198}",
+      "at": "2026-09-23T08:28:01.866Z"
+    },
+    {
+      "tool": "ssh",
+      "ok": false,
+      "exitCode": 255,
+      "result": "{\"ok\":false,\"command\":\"echo \\\"SSH host:\\\"; hostname; cat /etc/hosts | head -5\",\"host\":\"localhost\",\"user\":\"flak3dd\",\"port\":22,\"stdout\":\"\",\"stderr\":\"ssh: connect to host localhost port 22: Connection refused\\nSpark SSH is down (localhost). Not retrying SSH this turn.\",\"exitCode\":255,\"durationMs\":7}",
+      "at": "2026-09-23T08:28:04.519Z"
+    },
+    {
+      "tool": "ssh",
+      "ok": false,
+      "exitCode": 255,
+      "result": "{\"ok\":false,\"command\":\"nmap -sT -p 1-1024 10.50.64.3\",\"host\":\"10.50.64.3\",\"user\":\"flak3dd\",\"port\":22,\"stdout\":\"\",\"stderr\":\"ssh: connect to host 10.50.64.3 port 22: Connection refused\\nSpark SSH is down (10.50.64.3). Not retrying SSH this turn.\",\"exitCode\":255,\"durationMs\":99}",
+      "at": "2026-09-23T08:28:47.733Z"
+    }
+  ],
+  "filesTouched": [],
+  "lastCommand": "nmap -sT -p 1-1024 10.50.64.3",
+  "browserRunId": null,
+  "milestones": [],
+  "children": [],
+  "checkpoint": null,
+  "finishedAt": null,
+  "updatedAt": "2026-09-23T08:28:47.733Z"
+}

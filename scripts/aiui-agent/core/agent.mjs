@@ -24,6 +24,8 @@ import { AGENT_TOOLS } from '../tools/registry.mjs';
 import { executeTool } from '../tools/executor.mjs';
 import { executeBashCommand, resetSparkSshCircuit } from '../tools/handlers/bash.mjs';
 import { preparePalaceContext, reflectPalaceDraft, consolidateDurableTurn } from '../../../src/lib/palaceOrchestrator.ts';
+import { applyLearningStep, freshLearningState } from '../../../src/lib/learningLoop.ts';
+import { critiqueTurn } from '../../../src/lib/criticGate.ts';
 import processManager from './process-manager.mjs';
 import { browserOpenHandler } from '../tools/handlers/browser.mjs';
 import { webUnblockerHandler } from '../tools/handlers/unblocker.mjs';
@@ -73,7 +75,7 @@ export class AiuiAgent {
     this.baseUrl = options.baseUrl || (this.provider === 'spark' ? `http://${SPARK_QWEN_HOST}:8000/v1` : (isRunningOnSpark() ? FEATHERLESS_DIRECT_URL : CLOUD_KEY_PROXY_URL));
     this.workspaceDir = options.workspaceDir || process.cwd();
     this.envId = options.envId || DEFAULT_ENV_ID;
-    this.maxRounds = options.maxRounds || parseInt(process.env.AIUI_MAX_ROUNDS, 10) || 50;
+    this.maxRounds = options.maxRounds || parseInt(process.env.AIUI_MAX_ROUNDS, 10) || 80;
     this.deepBuild = Boolean(options.deepBuild);
     this.optimize = Boolean(options.optimize);
     this.verbose = Boolean(options.verbose);
@@ -376,6 +378,7 @@ export class AiuiAgent {
         }\nHTTP 200 alone is not proof. Origins must stay allowlisted.`;
       }
       let loopSteeringDirectives = [];
+      let learning = freshLearningState();
       let contextContinuations = 0;
 
       while (round < this.maxRounds && !finished) {
@@ -566,6 +569,22 @@ export class AiuiAgent {
 
         // Proof-of-Work Pre-Completion Validator (Pillar 2 / Rule 13 compliance)
         // If code was modified, reject completion until a test command (exit code 0) has been executed AFTER the mutation
+        if (filesModified.length > 0 && lastVerificationSuccessRound > lastModificationRound && round < this.maxRounds) {
+          const critic = critiqueTurn({
+            filesModified,
+            verified: true,
+            diffStat: this.lastDiffStat || '',
+          });
+          if (!critic.ok) {
+            this.log(`\n${rgb(...this.skin.warning)}\x1b[1mCritic:${c.reset} ${critic.reasons.join(' ')}`);
+            turnMessages.push({
+              role: 'user',
+              content: `[CONTINUE — CRITIC GATE]\n${critic.reasons.join('\n')}\nRun git diff --stat and keep secrets and generated trees out of the edit.`,
+            });
+            continue;
+          }
+        }
+
         if (filesModified.length > 0 && lastVerificationSuccessRound <= lastModificationRound && round < this.maxRounds) {
           this.log(
             `\n${rgb(...this.skin.warning)}\x1b[1m⚡ Proof-of-Work Gate: Code was modified (${filesModified.join(', ')}), but no verification test with exit code 0 was recorded since mutation. Continuing execution...${c.reset}`
@@ -801,6 +820,32 @@ export class AiuiAgent {
 
         if (toolName === 'bash' && isOk && (parsed.exitCode === undefined || parsed.exitCode === 0)) {
           lastVerificationSuccessRound = round;
+          if (typeof parsedArgs.command === 'string' && /git\s+diff/.test(parsedArgs.command)) {
+            this.lastDiffStat = String(parsed.stdout || parsed.result || '').slice(0, 2000);
+          }
+        }
+
+        const assistantRaw = typeof assistantMsg?.content === 'string' ? assistantMsg.content : '';
+        const assistantClean = assistantRaw.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+        const learned = applyLearningStep(learning, {
+          command: typeof parsedArgs.command === 'string' ? parsedArgs.command : undefined,
+          toolName,
+          exitCode: typeof parsed.exitCode === 'number' ? parsed.exitCode : (isOk ? 0 : 1),
+          filesModified:
+            toolName === 'write_file' ||
+            toolName === 'replace_file_content' ||
+            toolName === 'multi_replace_file_content'
+              ? [String(parsedArgs.path || parsedArgs.filename || '')].filter(Boolean)
+              : [],
+          filesRead: toolName === 'read_file' || toolName === 'pdf_ocr' || toolName === 'grep_search' ? [String(parsedArgs.path || parsedArgs.query || '')].filter(Boolean) : [],
+          reasoning: assistantRaw.match(/<think>([\s\S]*?)<\/think>/)?.[1] || '',
+          responseText: assistantClean,
+        });
+        learning = learned.state;
+        if (learned.step.nudge) loopSteeringDirectives.push(learned.step.nudge);
+        if (learned.step.repeated && learned.state.reasoningRepeats >= 2) {
+          this.log(`\n${rgb(...this.skin.warning)}\x1b[1mLearning loop:${c.reset} repeated phase. Stopping this turn.`);
+          finished = true;
         }
 
         if (!isOk) {

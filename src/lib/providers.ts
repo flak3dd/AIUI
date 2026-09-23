@@ -265,7 +265,7 @@ export const FEATHERLESS_GATED_PREFER = [
 ];
 
 export const ABLITERATION_PREFER = [
-  'mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated',
+  'abliterated-model',
 ];
 
 export const UNGATED_ALTERNATIVE: Record<string, string> = {

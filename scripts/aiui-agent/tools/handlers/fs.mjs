@@ -4,8 +4,8 @@ import { spawn } from 'node:child_process';
 import {
   SANDBOX_RUNNER_URL,
   SSH_KEY,
-  SPARK_HOST,
   SPARK_USER,
+  getSparkSshHost,
   isRunningOnSpark,
   normalizeSandboxPath,
 } from '../../config.mjs';
@@ -107,6 +107,10 @@ export async function writeFileHandler(args, ctx) {
     try {
       const keyClean = SSH_KEY.replace(/^"|"$/g, '');
       const dirName = path.dirname(normalized);
+      const { host: sparkSshHost, bothRefused } = await getSparkSshHost();
+      if (bothRefused) {
+        throw new Error('Spark SSH refused on configured and Tailscale hosts');
+      }
       await new Promise((resolve, reject) => {
         const child = spawn(
           'ssh',
@@ -115,7 +119,7 @@ export async function writeFileHandler(args, ctx) {
             '-o', 'ConnectTimeout=10',
             '-o', 'StrictHostKeyChecking=no',
             '-i', keyClean,
-            `${SPARK_USER}@${SPARK_HOST}`,
+            `${SPARK_USER}@${sparkSshHost}`,
             `mkdir -p ${JSON.stringify(dirName)} && cat > ${JSON.stringify(normalized)}`,
           ],
           { stdio: ['pipe', 'pipe', 'pipe'] }

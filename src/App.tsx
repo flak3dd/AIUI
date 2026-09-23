@@ -32,6 +32,7 @@ import {
   buildContinueNudge,
   looksLikeKnowledgeQuery,
   formatAgentResponseAsDevin,
+  compactHistoricToolMessages,
 } from './lib/agent'
 import { enforceAutomateCue, hasAutomateCue } from './lib/wordCues'
 import {
@@ -92,6 +93,8 @@ import { ToastProvider, useToast } from './components/shell/ToastNotification'
 import { queryRagKnowledge, formatRagContextBlock } from './lib/rag/ragService'
 import { exportProjectZip } from './lib/zipExporter'
 import { AgentAnalyzer, type ActionRecord, getAntiLoopPromptSuggestions, type AntiLoopSuggestion } from './lib/agentAnalyzer'
+import { applyLearningStep, freshLearningState, type LearningState } from './lib/learningLoop'
+import { critiqueTurn } from './lib/criticGate'
 import { shouldCountAsGoalVerified, checkAgentCompletionStatus } from './lib/goalVerification'
 import { sendAgentDebugEvent } from './lib/agentDebugLogger'
 import { ChatStage } from './components/chat/ChatStage'
@@ -171,6 +174,7 @@ function MainApp() {
   } | null>(null)
   const [antiLoopSuggestions, setAntiLoopSuggestions] = useState<AntiLoopSuggestion[] | null>(null)
   const analyzerRef = useRef(new AgentAnalyzer())
+  const learningRef = useRef<LearningState>(freshLearningState())
 
   // Reactive rain mood — derived from conversation context (debounced)
   const lastFailureRef = useRef(false)
@@ -644,6 +648,17 @@ function MainApp() {
       settings.workspaceDir,
     )
     setTerminalLogs((prev) => [...prev, result])
+    void fetch('/api/agent-events', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'agent:terminal_chunk',
+        command: result.command,
+        exitCode: result.exitCode,
+        stdout: (result.stdout || '').slice(0, 4000),
+        stderr: (result.stderr || '').slice(0, 2000),
+      }),
+    }).catch(() => {})
     setExecutingCmd(false)
 
     const { lines, heatmap } = parseTerminalLines(result.stdout || result.stderr || '', cmd)
@@ -802,7 +817,8 @@ function MainApp() {
     // Proactive Context Management & Headroom Clamping
     const maxContextLimit = getProviderContextLimit(settingsRef.current.provider, settingsRef.current.model)
     const estInput = estimateMessagesTokens(working as any)
-    let requestedTokens = settingsRef.current.maxTokens ?? 4096
+    const tokenFloor = settingsRef.current.deepBuild ? 16384 : settingsRef.current.agentMode ? 8192 : 4096
+    let requestedTokens = Math.max(settingsRef.current.maxTokens ?? 4096, tokenFloor)
 
     if (estInput + requestedTokens > maxContextLimit) {
       if (maxContextLimit - estInput >= 512) {
@@ -901,7 +917,7 @@ function MainApp() {
       )
     }
 
-    const wantThinking = Boolean(settingsRef.current.deepBuild)
+    const wantThinking = Boolean(settingsRef.current.agentMode || settingsRef.current.deepBuild)
     const t0 = Date.now()
     let result = await runStream(wantThinking)
 
@@ -1058,6 +1074,17 @@ function MainApp() {
       activeProvider(settingsRef.current),
       (bashRes) => {
         setTerminalLogs((prev) => [...prev, bashRes])
+        void fetch('/api/agent-events', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'agent:terminal_chunk',
+            command: bashRes.command,
+            exitCode: bashRes.exitCode,
+            stdout: (bashRes.stdout || '').slice(0, 4000),
+            stderr: (bashRes.stderr || bashRes.error || '').slice(0, 2000),
+          }),
+        }).catch(() => {})
         const paneId = `pane_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
         const { lines, heatmap } = parseTerminalLines(
           bashRes.stdout || bashRes.stderr || bashRes.error || '',
@@ -1295,16 +1322,21 @@ function MainApp() {
     abortRef.current = controller
 
     const cfg = settings.agentMaxRounds ?? 8
-    const ROUND_BATCH = isAgent ? (settings.deepBuild || isOptimize ? Math.max(cfg, 14) : cfg) : 1
-    const MAX_AUTO_CONTINUES = isAgent ? (settings.deepBuild || isOptimize ? 8 : 5) : 0
+    const ROUND_BATCH = isAgent
+      ? (settings.deepBuild || isOptimize ? Math.max(cfg, 64) : Math.max(cfg, 32))
+      : 1
+    const MAX_AUTO_CONTINUES = isAgent ? (settings.deepBuild || isOptimize ? 20 : 12) : 0
     let autoContinueCount = 0
     let maxRounds = ROUND_BATCH
     let emptyAnswerRetries = 0
     let lastFailedCommand: string | null = null
+    let proofSinceEdit = true
+    let diffStat = ''
 
     setAntiLoopSuggestions(null)
     // Initialize continuous anti-loop and direction analyzer with the user's objective
     analyzerRef.current.initSession(text)
+    learningRef.current = freshLearningState()
 
     try {
       let round = 0
@@ -1329,6 +1361,7 @@ function MainApp() {
             detail: stDetail,
           })
           setLatestMonologue(formatMonologueState(stStage, stDetail))
+          working = compactHistoricToolMessages(working)
         }
 
         const out = await appendAssistantStream(working, controller, isAgent, modelOverride, viewMode)
@@ -1449,7 +1482,8 @@ function MainApp() {
         if (out.executions && out.executions.length > 0) {
           for (const exec of out.executions) {
             toolNamesUsed.push(exec.name)
-            if (exec.name === 'write_file') {
+            if (exec.name === 'write_file' || exec.name === 'replace_file_content' || exec.name === 'multi_replace_file_content') {
+              proofSinceEdit = false
               try {
                 const parsed = JSON.parse(exec.rawResult)
                 if (parsed?.path && !filesModified.includes(parsed.path)) filesModified.push(parsed.path)
@@ -1472,6 +1506,10 @@ function MainApp() {
             } else if (exec.name === 'bash' || exec.name === 'exec') {
               lastCmdRun = exec.bashResult?.command
               lastExitCode = exec.bashResult?.exitCode
+              if (lastExitCode === 0) proofSinceEdit = true
+              if (lastExitCode === 0 && lastCmdRun && /git\s+diff/.test(lastCmdRun)) {
+                diffStat = (lastStdout || '').slice(0, 2000)
+              }
               lastStdout = exec.bashResult?.stdout
               lastStderr = exec.bashResult?.stderr || exec.bashResult?.error || exec.rawResult
             } else if (lastExitCode === undefined && typeof exec.rawResult === 'string') {
@@ -1592,6 +1630,30 @@ function MainApp() {
         // CONTINUOUS ANALYSIS: Detect answer looping, stagnant errors, cyclic oscillation, and track progress direction
         const analysis = analyzerRef.current.analyzeStep(currentAction)
         analyzerRef.current.recordAction(currentAction)
+        const learned = applyLearningStep(learningRef.current, {
+          command: currentAction.command,
+          toolName: currentAction.toolName,
+          exitCode: currentAction.exitCode,
+          filesModified: currentAction.filesModified,
+          filesRead: currentAction.filesRead,
+          reasoning: out.reasoning,
+          responseText: out.content,
+        })
+        learningRef.current = learned.state
+        if (isAgent && learned.step.nudge) {
+          working.push({ role: 'user', content: learned.step.nudge })
+        }
+        if (isAgent && learned.step.repeated && learned.state.reasoningRepeats >= 2) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: uid(),
+              role: 'assistant',
+              content: `Stopped: the same reasoning repeated.\n\n${learned.state.lessons.map((line) => `• ${line}`).join('\n') || 'Answer with the evidence already gathered.'}`,
+            },
+          ])
+          break
+        }
 
         sendAgentDebugEvent({
           type: 'anti_loop',
@@ -1785,6 +1847,51 @@ function MainApp() {
                 directive:
                   compStatus.directive ||
                   `The prompt clearly asks for more (${compStatus.reason}). Do not stop or claim complete until all requested items are finished. Execute the next required concrete tool action now.`,
+              }),
+            })
+            round++
+            continue
+          }
+        }
+
+        if (isAgent && turnFilesModified.length > 0 && !proofSinceEdit && autoContinueCount < MAX_AUTO_CONTINUES) {
+          autoContinueCount++
+          maxRounds += 1
+          working.push({
+            role: 'user',
+            content: buildContinueNudge({
+              goal: text,
+              reason: 'proof-of-work',
+              stage: 'verification',
+              directive:
+                'Files were modified but no command has exited 0 since the edit. Do not say the task is finished. Run a verification command with bash. A passing result is exit code 0. Then report that command and git diff --stat.',
+            }),
+          })
+          round++
+          continue
+        }
+
+        if (isAgent && turnFilesModified.length > 0 && proofSinceEdit) {
+          const critic = critiqueTurn({
+            filesModified: turnFilesModified,
+            verified: true,
+            diffStat,
+          })
+          if (!critic.ok && autoContinueCount < MAX_AUTO_CONTINUES) {
+            autoContinueCount++
+            maxRounds += 1
+            void fetch('/api/agent-events', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ type: 'agent:critic', reasons: critic.reasons, files: turnFilesModified }),
+            }).catch(() => {})
+            working.push({
+              role: 'user',
+              content: buildContinueNudge({
+                goal: text,
+                reason: 'critic-gate',
+                stage: 'verification',
+                directive: critic.reasons.join(' '),
               }),
             })
             round++

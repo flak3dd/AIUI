@@ -2,13 +2,21 @@
 // 🛡️ Output Curation & Anti-Overflow Engine
 // ==========================================
 
+const OFFLOAD_HINT =
+  'Omitted bulk stays out of local context. Use squad_enqueue with a specific question and a short excerpt; do not paste the omitted text back.';
+
+function withOffloadHint(body) {
+  if (body.includes('squad_enqueue')) return body;
+  return `${body}\n${OFFLOAD_HINT}`;
+}
+
 /**
- * Curates tool output for the LLM context window:
- * 1. Safely unpacks JSON responses from read_file so code is readable with line numbers and markers.
- * 2. Enforces generous limits (64,000 chars, 1,000 lines) so files up to 1,000 lines are never truncated.
- * 3. Safely trims massive log dumps with clear navigation hints.
+ * Curates tool output for the local Spark context window:
+ * 1. Unpacks read_file JSON so the code stays readable.
+ * 2. Caps a single tool result (8,000 chars, 200 lines) so one dump cannot fill the turn.
+ * 3. Points the model at squad_enqueue for analysis of what was omitted.
  */
-export function formatToolOutputForContext(text, maxChars = 32000, maxLines = 800) {
+export function formatToolOutputForContext(text, maxChars = 8000, maxLines = 200) {
   if (!text) return text;
 
   // Safe JSON extraction for read_file to prevent JSON string truncation or escaped newline bloat
@@ -42,13 +50,16 @@ export function formatToolOutputForContext(text, maxChars = 32000, maxLines = 80
       '',
       ...lines.slice(-tailN),
     ].join('\n');
+    curated = withOffloadHint(curated);
   }
   if (curated.length <= maxChars) return curated;
   const half = Math.floor((maxChars - 200) / 2);
   const head = curated.slice(0, half);
   const tail = curated.slice(curated.length - half);
   const omitted = curated.length - (head.length + tail.length);
-  return `${head}\n\n... [${omitted} characters truncated; use targeted start_line / line_count] ...\n\n${tail}`;
+  return withOffloadHint(
+    `${head}\n\n... [${omitted} characters truncated; use targeted start_line / line_count] ...\n\n${tail}`,
+  );
 }
 
 /**
