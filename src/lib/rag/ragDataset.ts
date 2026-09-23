@@ -20,9 +20,9 @@ export const KNOWLEDGE_DATASET: KnowledgeRecord[] = [
 Verified Spark / Mac / cloud routes for Abliterated.
 
 ## Hosts
-- Direct LAN Spark (primary): 192.168.4.103 — NVIDIA DGX Spark GB10 (~10–13ms)
+- Direct LAN Spark (primary Qwen vLLM): 192.168.4.103 — NVIDIA DGX Spark GB10 (~10–13ms)
 - Secondary LAN Spark NIC: 192.168.4.101 (~20–60ms)
-- Tailscale Spark: 100.94.45.77 hostname gx10-d0e7 (~10–25ms)
+- Tailscale Spark (controller & sandboxes): 100.66.147.53 hostname gx10 (~10–25ms)
 - Mac host LAN: 192.168.4.50 — Gateway, web interfaces (~1–3ms)
 - Mac Tailscale: 100.120.81.22
 - Localhost: 127.0.0.1

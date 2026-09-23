@@ -23,3 +23,10 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Durable browser run artifacts
+data/browser-runs/runs/

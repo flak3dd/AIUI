@@ -5,7 +5,7 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SPARK_HOST="${SPARK_HOST:-192.168.4.103}"
+SPARK_HOST="${SPARK_HOST:-100.66.147.53}"
 SPARK_USER="${SPARK_USER:-flak3dd}"
 SSH_KEY="${SPARK_SSH_KEY:-$HOME/Library/Application Support/NVIDIA/Sync/config/nvsync.key}"
 

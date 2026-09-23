@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Quick action start for AIUI Autonomous Agent
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AIUI_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+exec "$AIUI_ROOT/aiui" "$@"

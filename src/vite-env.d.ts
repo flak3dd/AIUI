@@ -11,6 +11,8 @@ interface ImportMetaEnv {
   readonly VITE_SPARK_USE_PROXY: string
   readonly VITE_SPARK_API_KEY: string
   readonly VITE_MEMPALACE_URL: string
+  readonly VITE_AGENT_MONITOR_URL: string
+  readonly VITE_RESPONSE_OPTIMIZER_URL: string
 }
 
 interface ImportMeta {

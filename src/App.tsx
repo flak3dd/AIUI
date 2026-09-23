@@ -8,11 +8,14 @@ import {
   modelLabel,
   preferFor,
   saveSettings,
+  applyAssistMode,
+  getAssistMode,
   UNGATED_ALTERNATIVE,
   type StoredSettings,
   providerSupportsNativeTools,
   SPARK_PREFER,
 } from './lib/providers'
+import { TERM_THEMES, applyTermTheme, loadTermThemeId } from './lib/termThemes'
 import {
   fetchModels,
   streamChat,
@@ -28,7 +31,12 @@ import {
   buildTurnContextBlock,
   buildContinueNudge,
   looksLikeKnowledgeQuery,
+  formatAgentResponseAsDevin,
 } from './lib/agent'
+import {
+  getWorkflowContextTools,
+  loadDynamicToolRegistry,
+} from './lib/dynamicToolManager'
 import {
   checkSandboxHealth,
   executeBashCommand,
@@ -40,6 +48,9 @@ import {
   setStoredAutoBash,
   setStoredTarget,
   setStoredWorkspaceDir,
+  allocateChatWorkspace,
+  getActiveWorkspaceEnvId,
+  setActiveWorkspaceEnvId,
   type BashExecResult,
   type ExecutionTarget,
   type SandboxStatus,
@@ -52,10 +63,14 @@ import {
   setAutoRecall,
   getAutoCheckpoint,
   setAutoCheckpoint,
-  searchMemory,
-  checkpointMemory,
   type MemPalaceStatus,
 } from './lib/mempalace'
+import {
+  consolidateDurableTurn,
+  preparePalaceContext,
+  reflectPalaceDraft,
+  type PalaceContext,
+} from './lib/palaceOrchestrator'
 import {
   type ChatSession,
   loadAllSessions,
@@ -69,29 +84,45 @@ import {
   togglePinSession,
   generateTitle,
 } from './lib/chatHistory'
-import { CommandPalette } from './components/CommandPalette'
-import { WorkspaceExplorer } from './components/WorkspaceExplorer'
-import { MeshPulse } from './components/MeshPulse'
+import { CommandPalette } from './components/shell/CommandPalette'
+import { WorkspaceExplorer } from './components/shell/WorkspaceExplorer'
 import { applyTheme, loadTheme } from './lib/theme'
-import { ToastProvider, useToast } from './components/ToastNotification'
+import { ToastProvider, useToast } from './components/shell/ToastNotification'
 import { queryRagKnowledge, formatRagContextBlock } from './lib/rag/ragService'
 import { exportProjectZip } from './lib/zipExporter'
 import { AgentAnalyzer, type ActionRecord, getAntiLoopPromptSuggestions, type AntiLoopSuggestion } from './lib/agentAnalyzer'
-import { shouldCountAsGoalVerified } from './lib/goalVerification'
+import { shouldCountAsGoalVerified, checkAgentCompletionStatus } from './lib/goalVerification'
 import { sendAgentDebugEvent } from './lib/agentDebugLogger'
-import { ChatStage } from './components/ChatStage'
-import { Composer } from './components/Composer'
-import { TerminalDrawer } from './components/TerminalDrawer'
-import { SettingsSheet } from './components/SettingsSheet'
-import { SessionRail } from './components/SessionRail'
+import { ChatStage } from './components/chat/ChatStage'
+import { Composer } from './components/chat/Composer'
+import { TerminalDrawer } from './components/terminal/TerminalDrawer'
+import { SettingsSheet } from './components/shell/SettingsSheet'
+import { SessionRail } from './components/chat/SessionRail'
 import type { UiMessage } from './types/ui'
-import { scoreConversation, MOOD_LABELS, type Mood } from './lib/rainMood'
-import { PerspectiveLaserField } from './components/PerspectiveLaserField'
+import { RemoteClusterRunner } from './components/overlays/RemoteClusterRunner'
+import { Base64Studio } from './components/overlays/Base64Studio'
+import { ClusterStatusBar } from './components/telemetry/ClusterStatusBar'
+import { DynamicToolsModal } from './components/overlays/DynamicToolsModal'
 import {
-  inferAbliterationLevel,
-  ABLITERATION_LEVELS,
-  type AbliterationLevel,
-} from './lib/abliterationLevel'
+  isOptimizeShortcut,
+  expandOptimizePrompt,
+} from './lib/chatResponseOptimizer'
+import { DevinQuadPaneView } from './components/devin/DevinQuadPaneView'
+import {
+  type TerminalPaneData,
+  type CodeCanvasFile,
+  type MonologueEntry,
+  parseTerminalLines,
+  extractFileMutation,
+  inferLanguage,
+  formatMonologueState,
+} from './lib/commandSpaceEngine'
+import {
+  estimateMessagesTokens,
+  getProviderContextLimit,
+  compactMessagesForContext,
+  calculateSafeMaxTokens,
+} from './lib/contextCompactor'
 
 function uid() {
   return `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
@@ -141,26 +172,58 @@ function MainApp() {
   const analyzerRef = useRef(new AgentAnalyzer())
 
   // Reactive rain mood — derived from conversation context (debounced)
-  const [mood, setMood] = useState<Mood>('focus')
   const lastFailureRef = useRef(false)
   const toolsStrippedRef = useRef(false)
 
-  // Command Palette & Workspace Explorer Modals
+  // Command Palette, Workspace Explorer, SSH Tool & Base64 Modals
   const [paletteOpen, setPaletteOpen] = useState<boolean>(false)
   const [explorerOpen, setExplorerOpen] = useState<boolean>(false)
+  const [sshToolOpen, setSshToolOpen] = useState<boolean>(false)
+  const [base64ToolOpen, setBase64ToolOpen] = useState<boolean>(false)
+  const [dynamicToolsOpen, setDynamicToolsOpen] = useState<boolean>(false)
   const [composerAdvanced, setComposerAdvanced] = useState<boolean>(false)
   const [historyOpen, setHistoryOpen] = useState<boolean>(false)
+  const [termTheme, setTermTheme] = useState<string>(() => loadTermThemeId())
 
-  // Expandable Menu & Subsystem States
-  const [subsystemsMenuOpen, setSubsystemsMenuOpen] = useState<boolean>(false)
   const [quickModelMenuOpen, setQuickModelMenuOpen] = useState<boolean>(false)
   const [paramsAccordionOpen, setParamsAccordionOpen] = useState<boolean>(false)
-  const subsystemsMenuRef = useRef<HTMLDivElement | null>(null)
   const quickModelMenuRef = useRef<HTMLDivElement | null>(null)
+  const sharedToolsRef = useRef(AGENT_TOOLS)
+  useEffect(() => {
+    fetch('/api/agent-runs/tools')
+      .then((res) => res.json())
+      .then((json) => {
+        if (Array.isArray(json.tools) && json.tools.length) {
+          const byName = new Map<string, (typeof AGENT_TOOLS)[number]>()
+          for (const tool of [...AGENT_TOOLS, ...json.tools]) {
+            const name = tool?.function?.name
+            if (name) byName.set(name, tool)
+          }
+          sharedToolsRef.current = [...byName.values()]
+        }
+      })
+      .catch(() => {})
+  }, [])
+  const [workChrome, setWorkChrome] = useState<{
+    audit: () => void
+    auditing: boolean
+    env: string
+    milestones: string
+    agentBusy: boolean
+    terminalVisible: boolean
+    toggleTerminal: () => void
+    newBrowser: () => void
+    browserCount: number
+    browserCap: number
+    browserWindows: Array<{ id: string; label: string; sessionId?: string; url?: string }>
+    browserCapHit: boolean
+  } | null>(null)
+  const workChromeRef = useRef(workChrome)
+  workChromeRef.current = workChrome
 
   // Welcome banner text
   const WELCOME_CONTENT =
-    '==> Welcome to Abliterated Studio\n==> Skin: Abliterated Night (Zinc #09090B · Violet #8B5CF6 · Cyan #22D3EE)\n==> Providers: Featherless · Abliteration · GX10 Spark\n==> Native Sandbox runner active on :17330\nType any prompt or python/bash command to start.'
+    '==> Welcome to Abliterated Studio\n==> Skin: Lumen (Canvas #050812 · Violet #A363FF · Cyan #2EEDFF · Green #33FF9E)\n==> Providers: Featherless · Abliteration · GX10 Spark\n==> Native Sandbox runner active on :17330\nType any prompt or python/bash command to start.'
 
   // Chat History & Multi-Session Persistence
   const [sessions, setSessions] = useState<ChatSession[]>(() => {
@@ -180,6 +243,15 @@ function MainApp() {
     if (stored && loaded.some((s) => s.id === stored)) return stored
     return loaded[0]?.id || 'initial'
   })
+  const [activeWorkspaceEnvId, setActiveWorkspaceEnvIdState] = useState<string>(() => getActiveWorkspaceEnvId())
+
+  useEffect(() => {
+    if (!activeSessionId) return
+    void allocateChatWorkspace(activeSessionId).then((ws) => {
+      setActiveWorkspaceEnvIdState(ws.envId)
+      setActiveWorkspaceEnvId(ws.envId)
+    })
+  }, [activeSessionId])
 
   // Inline Code Cell Executions
   const [inlineExecResults, setInlineExecResults] = useState<Record<string, BashExecResult>>({})
@@ -204,23 +276,42 @@ function MainApp() {
   settingsRef.current = settings
   const lastUserTextRef = useRef<string>('')
 
+  // Workspace State: 'devin' (AIUI workspace) or 'studio' (Studio Chat)
+  const [viewMode, setViewMode] = useState<'studio' | 'devin'>(() => {
+    try {
+      const saved = localStorage.getItem('aiui_view_mode')
+      if (saved === 'devin' || saved === 'studio') return saved
+    } catch {}
+    return 'devin'
+  })
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('aiui_view_mode', viewMode)
+    } catch {}
+  }, [viewMode])
+  const [, setCommandPanes] = useState<TerminalPaneData[]>([])
+  const [, setActiveCodeFile] = useState<CodeCanvasFile | null>(null)
+  const [, setLatestMonologue] = useState<MonologueEntry | undefined>()
+
+  // Keyboard shortcut: Cmd+Shift+D (Toggle AIUI workspace)
+  useEffect(() => {
+    const handleDevinHotkey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'd') {
+        e.preventDefault()
+        setViewMode((prev) => (prev === 'devin' ? 'studio' : 'devin'))
+      }
+    }
+    window.addEventListener('keydown', handleDevinHotkey)
+    return () => window.removeEventListener('keydown', handleDevinHotkey)
+  }, [])
+
   const provider = useMemo(() => activeProvider(settings), [settings])
 
-  // Debounced mood derivation from conversation context (1.8s hysteresis)
+  // Load acquired dynamic tools on mount
   useEffect(() => {
-    const timer = setTimeout(() => {
-      const computed = scoreConversation({
-        messages,
-        busy,
-        hasFailure: lastFailureRef.current,
-        toolsStripped: toolsStrippedRef.current,
-        agentMode: settings.agentMode,
-        deepBuild: settings.deepBuild,
-      })
-      setMood((prev) => (prev !== computed ? computed : prev))
-    }, 1800)
-    return () => clearTimeout(timer)
-  }, [messages, busy, settings.agentMode, settings.deepBuild])
+    loadDynamicToolRegistry().catch(() => {})
+  }, [])
 
   // Sync messages & auto-title to active session in localStorage
   useEffect(() => {
@@ -386,7 +477,12 @@ function MainApp() {
       }
       if ((e.metaKey || e.ctrlKey) && (e.key === '`' || e.key === '~')) {
         e.preventDefault()
-        setTerminalOpen((prev) => !prev)
+        // Desk: TerminalDrawer. Work: same PTY pane via menu toggle (no second drawer).
+        if (viewMode === 'devin') {
+          workChromeRef.current?.toggleTerminal()
+        } else {
+          setTerminalOpen((prev) => !prev)
+        }
       }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n' && !e.shiftKey) {
         const tag = (document.activeElement?.tagName || '').toLowerCase()
@@ -398,7 +494,7 @@ function MainApp() {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [handleNewChat])
+  }, [handleNewChat, viewMode])
 
   const filteredModels = useMemo(() => {
     let list = models
@@ -480,6 +576,7 @@ function MainApp() {
     settings.sparkHost,
     settings.sparkPort,
     settings.sparkUseProxy,
+    settings.sparkRoute,
     settings.sparkApiKey,
     refreshModels,
   ])
@@ -492,12 +589,6 @@ function MainApp() {
 
   useEffect(() => {
     const handleOutsideClick = (e: MouseEvent) => {
-      if (
-        subsystemsMenuRef.current &&
-        !subsystemsMenuRef.current.contains(e.target as Node)
-      ) {
-        setSubsystemsMenuOpen(false)
-      }
       if (
         quickModelMenuRef.current &&
         !quickModelMenuRef.current.contains(e.target as Node)
@@ -522,9 +613,76 @@ function MainApp() {
     setExecutingCmd(true)
     setTermHistory((prev) => (prev.length > 0 && prev[prev.length - 1] === cmd ? prev : [...prev, cmd]))
     setHistoryIndex(-1)
-    const result = await executeBashCommand(cmd, target, undefined, undefined, settings.workspaceDir)
+
+    const paneId = `pane_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+    setCommandPanes((prev) => [
+      {
+        id: paneId,
+        title: cmd,
+        command: cmd,
+        state: 'streaming',
+        stdout: '',
+        stderr: '',
+        lines: [{ id: 'cmd', lineNumber: 1, text: `$ ${cmd}`, type: 'command' }],
+        heatmap: [{ lineIndex: 0, type: 'command', label: `$ ${cmd}` }],
+        exitCode: null,
+        target,
+        timestamp: new Date().toLocaleTimeString(),
+      },
+      ...prev.slice(0, 15),
+    ])
+
+    setLatestMonologue(formatMonologueState('running_cmd', cmd))
+
+    const result = await executeBashCommand(
+      cmd,
+      target,
+      activeWorkspaceEnvId || getActiveWorkspaceEnvId(),
+      undefined,
+      settings.workspaceDir,
+    )
     setTerminalLogs((prev) => [...prev, result])
     setExecutingCmd(false)
+
+    const { lines, heatmap } = parseTerminalLines(result.stdout || result.stderr || '', cmd)
+    const isErr = !result.ok || (result.exitCode !== undefined && result.exitCode !== 0)
+
+    setCommandPanes((prev) =>
+      prev.map((p) =>
+        p.id === paneId
+          ? {
+              ...p,
+              state: isErr ? 'error' : 'completed',
+              stdout: result.stdout || '',
+              stderr: result.stderr || result.error || '',
+              lines,
+              heatmap,
+              exitCode: result.exitCode ?? (result.ok ? 0 : 1),
+              durationMs: result.durationMs,
+            }
+          : p
+      )
+    )
+
+    // Detect file creation or updates (e.g. cat << EOF > file, echo > file, sed)
+    const mutation = extractFileMutation(cmd, result.stdout)
+    if (mutation) {
+      setActiveCodeFile({
+        path: mutation.path,
+        content: mutation.content || result.stdout || '',
+        language: inferLanguage(mutation.path),
+        isGhostTyping: true,
+        lastModifiedTimestamp: Date.now(),
+        mutationType: mutation.mutationType,
+      })
+    }
+
+    if (isErr) {
+      setLatestMonologue(formatMonologueState('error', `${cmd} failed (exit ${result.exitCode ?? 1})`))
+    } else {
+      setLatestMonologue(formatMonologueState('done', `${cmd} completed (${result.durationMs}ms)`))
+    }
+
     return result
   }
 
@@ -623,6 +781,7 @@ function MainApp() {
     controller: AbortController,
     useTools: boolean,
     activeModelOverride?: string,
+    currentViewMode?: 'studio' | 'devin',
   ): Promise<{
     working: ChatMessage[]
     toolCalls: number
@@ -638,17 +797,41 @@ function MainApp() {
     setMessages((m) => [...m, { id: assistantId, role: 'assistant', content: '', reasoning: '' }])
     let acc = ''
     let reasoningAcc = ''
+    // Proactive Context Management & Headroom Clamping
+    const maxContextLimit = getProviderContextLimit(settingsRef.current.provider, settingsRef.current.model)
+    const estInput = estimateMessagesTokens(working as any)
+    let requestedTokens = settingsRef.current.maxTokens ?? 4096
+
+    if (estInput + requestedTokens > maxContextLimit) {
+      if (maxContextLimit - estInput >= 512) {
+        requestedTokens = calculateSafeMaxTokens(estInput, requestedTokens, maxContextLimit)
+      } else {
+        working = compactMessagesForContext(
+          working as unknown as import('./lib/contextCompactor').ContextMessage[],
+          maxContextLimit,
+          1536,
+        ) as ChatMessage[]
+        const reEst = estimateMessagesTokens(working)
+        requestedTokens = calculateSafeMaxTokens(reEst, requestedTokens, maxContextLimit)
+      }
+    }
+
     const body: Record<string, unknown> = {
       model: activeModelOverride || settingsRef.current.model,
       messages: working,
       temperature: settingsRef.current.temperature ?? 0.7,
-      max_tokens: settingsRef.current.maxTokens ?? 4096,
+      max_tokens: requestedTokens,
     }
     let toolsStrippedNotice: string | null = null
     const canNativeTools =
       useTools && providerSupportsNativeTools(settingsRef.current.provider)
     if (canNativeTools) {
-      body.tools = AGENT_TOOLS
+      const lastUserMsg = [...working].reverse().find((m) => m.role === 'user')
+      const lastUserPrompt = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : ''
+      const hasToolCalls = working.some((m) => m.role === 'tool')
+      const currentPhase = hasToolCalls ? 'execute' : 'inspect'
+      const toolCatalog = sharedToolsRef.current.length ? sharedToolsRef.current : AGENT_TOOLS
+      body.tools = getWorkflowContextTools(toolCatalog, lastUserPrompt, currentPhase, 5)
       body.tool_choice = 'auto'
     } else if (useTools) {
       // Unknown / future providers without tool support — Auto-Bash only (no scary banner).
@@ -734,7 +917,7 @@ function MainApp() {
           role: 'assistant',
           content: reasoningAcc
             ? `(reasoning only — ${reasoningAcc.length} chars; answer missing)`
-            : null,
+            : '(reasoning only — answer missing)',
         },
         {
           role: 'user',
@@ -829,13 +1012,22 @@ function MainApp() {
       flushStreamUi()
     }
 
+    const assistantContent = (result.content || '').trim() || acc || '';
     working = [
       ...working,
       {
         role: 'assistant',
-        content: (result.content || '').trim() || (result.tool_calls.length ? null : acc) || null,
+        content: currentViewMode === 'devin' 
+          ? formatAgentResponseAsDevin(
+              assistantContent,
+              reasoningAcc,
+              result.tool_calls,
+              { status: 'Processing', progress: 'Generating response' }
+            )
+          : assistantContent,
         tool_calls: result.tool_calls.length ? result.tool_calls : undefined,
-      },
+        reasoning: reasoningAcc,
+      } as ChatMessage,
     ]
     // Attach tool_calls to the assistant UI message so multi-turn rebuild is faithful
     if (result.tool_calls.length) {
@@ -864,6 +1056,47 @@ function MainApp() {
       activeProvider(settingsRef.current),
       (bashRes) => {
         setTerminalLogs((prev) => [...prev, bashRes])
+        const paneId = `pane_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+        const { lines, heatmap } = parseTerminalLines(
+          bashRes.stdout || bashRes.stderr || bashRes.error || '',
+          bashRes.command
+        )
+        const isErr = !bashRes.ok || (bashRes.exitCode !== undefined && bashRes.exitCode !== 0)
+        setCommandPanes((prev) => [
+          {
+            id: paneId,
+            title: bashRes.command,
+            command: bashRes.command,
+            state: isErr ? 'error' : 'completed',
+            stdout: bashRes.stdout || '',
+            stderr: bashRes.stderr || bashRes.error || '',
+            lines,
+            heatmap,
+            exitCode: bashRes.exitCode ?? (bashRes.ok ? 0 : 1),
+            target: bashRes.target,
+            timestamp: new Date().toLocaleTimeString(),
+            durationMs: bashRes.durationMs,
+          },
+          ...prev.slice(0, 15),
+        ])
+        const mutation = extractFileMutation(bashRes.command, bashRes.stdout)
+        if (mutation) {
+          setActiveCodeFile({
+            path: mutation.path,
+            content: mutation.content || bashRes.stdout || '',
+            language: inferLanguage(mutation.path),
+            isGhostTyping: true,
+            lastModifiedTimestamp: Date.now(),
+            mutationType: mutation.mutationType,
+          })
+          setLatestMonologue(formatMonologueState('writing', mutation.path))
+        }
+      },
+      {
+        envId: activeWorkspaceEnvId || getActiveWorkspaceEnvId(),
+        chatId: activeSessionId || undefined,
+        target: getStoredTarget(),
+        provider: settingsRef.current.provider,
       },
     )
 
@@ -897,6 +1130,21 @@ function MainApp() {
           name: exec.name,
         },
       ])
+
+      if (exec.name === 'write_file' && exec.rawResult) {
+        const mutation = extractFileMutation('write_file', exec.rawResult)
+        if (mutation) {
+          setActiveCodeFile({
+            path: mutation.path,
+            content: mutation.content || exec.rawResult || '',
+            language: inferLanguage(mutation.path),
+            isGhostTyping: true,
+            lastModifiedTimestamp: Date.now(),
+            mutationType: mutation.mutationType,
+          })
+          setLatestMonologue(formatMonologueState('writing', mutation.path))
+        }
+      }
     }
 
     return {
@@ -925,31 +1173,15 @@ function MainApp() {
     lastFailureRef.current = false
     toolsStrippedRef.current = false
 
-    // MemPalace: search-before-answer — only when the ask needs prior knowledge
+    // MemPalace: wake L0+L1, kg_query, then scoped search after a locus binds.
     let memoryPrompt = ''
+    let palaceTurn: PalaceContext | null = null
+    let palaceReflected = false
     const wantKnowledge = looksLikeKnowledgeQuery(text)
-    if (autoRecall && mempalaceStatus?.online && wantKnowledge) {
+    if (autoRecall && mempalaceStatus?.online) {
       try {
-        const recall = await searchMemory(text, { limit: 5 })
-        const MIN_SIM = 0.35
-        const filtered = recall.results
-          .filter((r) => (r.text || '').trim().length > 40)
-          .filter((r) => r.similarity == null || r.similarity >= MIN_SIM)
-          .sort((a, b) => {
-            const boost = (r: typeof a) => (r.room === 'agent-analysis' ? 0.08 : 0)
-            return (b.similarity || 0) + boost(b) - ((a.similarity || 0) + boost(a))
-          })
-          .slice(0, 3)
-        if (filtered.length > 0) {
-          const memoryCtx = filtered
-            .map((r) => {
-              const sim =
-                r.similarity != null ? ` sim=${r.similarity.toFixed(2)}` : ''
-              return `[${r.wing}/${r.room}${sim}] ${(r.text || '').slice(0, 220)}`
-            })
-            .join('\n')
-          memoryPrompt = `Past memories (from MemPalace — high relevance only):\n${memoryCtx}`
-        }
+        palaceTurn = await preparePalaceContext(text)
+        memoryPrompt = palaceTurn.systemBlock
       } catch {
         // Memory failures should never block chat
       }
@@ -971,10 +1203,14 @@ function MainApp() {
       }
     }
 
+    const isOptimize = isOptimizeShortcut(text)
+    const effectivePrompt = isOptimize ? expandOptimizePrompt(text) : text
+    const displayUserText = isOptimize && !text.startsWith('⚡') ? `⚡ ${text}` : text
+
     const userMsg: UiMessage = {
       id: uid(),
       role: 'user',
-      content: text,
+      content: displayUserText,
       ragCitations: activeRagCitations.length > 0 ? activeRagCitations : undefined,
     }
     setMessages((m) => [...m, userMsg])
@@ -984,13 +1220,25 @@ function MainApp() {
       type: 'request',
       model: modelOverride || settings.model,
       provider: settings.provider,
-      userPrompt: text,
+      userPrompt: effectivePrompt,
       sessionId: activeSessionId || undefined,
     })
 
+    const isAgent = settings.agentMode || isOptimize
+    if (isAgent) {
+      try {
+        await fetch('/api/agent-runs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ goal: effectivePrompt }),
+        })
+      } catch {
+        /* the run still proceeds; the record is best-effort until the API is up */
+      }
+    }
     let working: ChatMessage[] = []
-    let effectiveSystem = settings.agentMode ? AGENT_SYSTEM : CHAT_SYSTEM
-    if (settings.deepBuild && settings.agentMode) {
+    let effectiveSystem = isAgent ? AGENT_SYSTEM : CHAT_SYSTEM
+    if (settings.deepBuild && isAgent) {
       effectiveSystem = `${effectiveSystem}\n\n${DEEP_BUILD_DIRECTIVE}`
     }
     if (memoryPrompt) {
@@ -999,16 +1247,16 @@ function MainApp() {
     if (ragPrompt) {
       effectiveSystem = `${effectiveSystem}\n\n${ragPrompt}`
     }
-    if (settings.agentMode) {
+    if (isAgent) {
       effectiveSystem = `${effectiveSystem}\n\n${buildTurnContextBlock({
-        goal: text,
+        goal: effectivePrompt,
         stage: 'discovery',
         round: 1,
       })}`
     }
     working.push({ role: 'system', content: effectiveSystem })
 
-    for (const m of [...messages.filter((x) => x.id !== 'welcome'), userMsg]) {
+    for (const m of [...messages.filter((x) => x.id !== 'welcome')]) {
       const msg: ChatMessage = { role: m.role, content: m.content }
       // Preserve tool_call_id / name / tool_calls so strict OpenAI-compatible APIs
       // don't 400 on multi-turn agent sessions (tool messages require tool_call_id)
@@ -1019,17 +1267,16 @@ function MainApp() {
       }
       working.push(msg)
     }
+    working.push({ role: 'user', content: effectivePrompt })
 
     const controller = new AbortController()
     abortRef.current = controller
 
-    const isAgent = settings.agentMode
     const cfg = settings.agentMaxRounds ?? 8
-    const ROUND_BATCH = isAgent ? (settings.deepBuild ? Math.max(cfg, 14) : cfg) : 1
-    const MAX_AUTO_CONTINUES = isAgent ? (settings.deepBuild ? 8 : 5) : 0
+    const ROUND_BATCH = isAgent ? (settings.deepBuild || isOptimize ? Math.max(cfg, 14) : cfg) : 1
+    const MAX_AUTO_CONTINUES = isAgent ? (settings.deepBuild || isOptimize ? 8 : 5) : 0
     let autoContinueCount = 0
     let maxRounds = ROUND_BATCH
-    let finalContent = ''
     let emptyAnswerRetries = 0
     let lastFailedCommand: string | null = null
 
@@ -1039,27 +1286,31 @@ function MainApp() {
 
     try {
       let round = 0
+      const turnCommandsRun: string[] = []
+      const turnFilesModified: string[] = []
       while (round < maxRounds) {
         if (controller.signal.aborted) break
 
         if (isAgent) {
+          const stDetail = lastFailedCommand
+            ? (settings.deepBuild ? `Deep Fix: ${lastFailedCommand}` : `Fixing: ${lastFailedCommand}`)
+            : autoContinueCount > 0
+            ? `Auto-continue ${autoContinueCount}/${MAX_AUTO_CONTINUES}`
+            : settings.deepBuild
+            ? 'Exhaustive architectural planning...'
+            : undefined
+          const stStage = round === 0 ? 'thinking' : lastFailedCommand ? 'fixing' : 'running_cmd'
           setAgentStatus({
             round: round + 1,
             maxRounds,
-            stage: round === 0 ? 'thinking' : lastFailedCommand ? 'fixing' : 'running_cmd',
-            detail: lastFailedCommand
-              ? (settings.deepBuild ? `Deep Fix: ${lastFailedCommand}` : `Fixing: ${lastFailedCommand}`)
-              : autoContinueCount > 0
-              ? `Auto-continue ${autoContinueCount}/${MAX_AUTO_CONTINUES}`
-              : settings.deepBuild
-              ? 'Exhaustive architectural planning...'
-              : undefined,
+            stage: stStage,
+            detail: stDetail,
           })
+          setLatestMonologue(formatMonologueState(stStage, stDetail))
         }
 
-        const out = await appendAssistantStream(working, controller, isAgent, modelOverride)
+        const out = await appendAssistantStream(working, controller, isAgent, modelOverride, viewMode)
         working = out.working
-        finalContent = out.content
         if (out.toolsStripped) toolsStrippedRef.current = true
 
         if (controller.signal.aborted) break
@@ -1180,6 +1431,16 @@ function MainApp() {
               try {
                 const parsed = JSON.parse(exec.rawResult)
                 if (parsed?.path && !filesModified.includes(parsed.path)) filesModified.push(parsed.path)
+                if (parsed?.path) {
+                  setActiveCodeFile({
+                    path: parsed.path,
+                    content: parsed.content || '',
+                    language: inferLanguage(parsed.path),
+                    isGhostTyping: true,
+                    lastModifiedTimestamp: Date.now(),
+                    mutationType: 'write_file',
+                  })
+                }
               } catch {}
             } else if (exec.name === 'read_file') {
               try {
@@ -1282,6 +1543,13 @@ function MainApp() {
               })
             }
           }
+        }
+
+        if (lastCmdRun && !turnCommandsRun.includes(lastCmdRun)) {
+          turnCommandsRun.push(lastCmdRun)
+        }
+        for (const fm of filesModified) {
+          if (!turnFilesModified.includes(fm)) turnFilesModified.push(fm)
         }
 
         // Continuous Action & Response Analysis
@@ -1441,6 +1709,7 @@ function MainApp() {
               command: lastCmdRun,
               exitCode: lastExitCode,
               stdout: lastStdout,
+              goal: text,
             })
 
           if (goalVerified) {
@@ -1450,9 +1719,9 @@ function MainApp() {
                 id: uid(),
                 role: 'assistant',
                 content:
-                  `✅ **Goal check passed** — verification succeeded` +
+                  `✅ **Verification passed**` +
                   (lastCmdRun ? ` (\`${lastCmdRun}\` exit 0)` : '') +
-                  `. Stopping early to avoid extra agent rounds.`,
+                  `. Task complete.`,
               },
             ])
             break
@@ -1462,7 +1731,64 @@ function MainApp() {
           continue
         }
 
-        // No tool calls and no extracted commands: Task finished!
+        // No tool calls and no extracted commands:
+        // Verify whether the agent turn is truly complete or if the prompt clearly asks for more
+        if (isAgent) {
+          const compStatus = checkAgentCompletionStatus({
+            goal: text,
+            assistantText: out.content,
+            commandsRun: turnCommandsRun,
+            filesModified: turnFilesModified,
+            round,
+            maxRounds,
+          })
+
+          if (!compStatus.isComplete && autoContinueCount < MAX_AUTO_CONTINUES) {
+            autoContinueCount++
+            maxRounds += ROUND_BATCH
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: uid(),
+                role: 'assistant',
+                content: `⚡ **Continuing execution** — prompt requires more (${compStatus.reason}). Resuming…`,
+              },
+            ])
+            working.push({
+              role: 'user',
+              content: buildContinueNudge({
+                goal: text,
+                reason: 'unfulfilled-prompt-continuation',
+                stage: 'implementation',
+                directive:
+                  compStatus.directive ||
+                  `The prompt clearly asks for more (${compStatus.reason}). Do not stop or claim complete until all requested items are finished. Execute the next required concrete tool action now.`,
+              }),
+            })
+            round++
+            continue
+          }
+        }
+
+        if (palaceTurn && !palaceReflected) {
+          const verdict = reflectPalaceDraft(out.content || '', palaceTurn)
+          if (!verdict.ok) {
+            palaceReflected = true
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: uid(),
+                role: 'assistant',
+                name: 'status_chip',
+                content: `palace reflection · ${verdict.reason}`,
+              },
+            ])
+            working.push({ role: 'user', content: verdict.nudge })
+            round++
+            continue
+          }
+        }
+
         break
       }
 
@@ -1480,29 +1806,12 @@ function MainApp() {
         ])
       }
 
-      // MemPalace: auto-checkpoint after response + agent analyzer summary
+      // MemPalace: verbatim drawer + triple + diary only when the user stated a durable decision.
       if (autoCheckpoint && mempalaceStatus?.online) {
         try {
-          const items: Array<{ wing: string; room: string; content: string }> = []
-          if (finalContent) {
-            items.push({
-              wing: 'web-api-app',
-              room: 'chat',
-              content: `User: ${text}
-
-Assistant: ${finalContent}`,
-            })
-          }
-          if (isAgent) {
-            items.push({
-              wing: 'web-api-app',
-              room: 'agent-analysis',
-              content: analyzerRef.current.getSessionSummary(),
-            })
-          }
-          if (items.length) await checkpointMemory(items)
+          await consolidateDurableTurn(text)
         } catch {
-          // Checkpoint failures should never block chat
+          // Write failures must not block the response
         }
       }
 
@@ -1545,462 +1854,335 @@ Assistant: ${finalContent}`,
 
   // Helper to render message content with syntax blocks, run buttons & deep thinking traces
   const chatScrollToken = messages.length + (busy ? 1 : 0)
+  const assistMode = getAssistMode(settings)
+  const activeChatTitle =
+    sessions.find((s) => s.id === activeSessionId)?.title?.trim() || 'New Conversation'
 
-  // Effective rain mood: auto (derived) / off (static focus) / manual (user-picked)
-  const effectiveMood: Mood =
-    settings.rainMode === 'off'
-      ? 'focus'
-      : settings.rainMode === 'manual'
-        ? ((settings.rainMoodManual as Mood) || 'focus')
-        : mood
+  useEffect(() => {
+    applyTermTheme(termTheme)
+  }, [termTheme])
 
-  // Effective 3-point perspective laser abliteration level: auto / off / manual
-  const effectiveLaserLevel: AbliterationLevel =
-    settings.laserMode === 'off'
-      ? 0
-      : settings.laserMode === 'manual'
-        ? (settings.laserLevelManual ?? 3)
-        : inferAbliterationLevel(
-            settings.model,
-            settings.provider,
-            busy,
-            isGatedModelId(settings.model),
-          )
+  useEffect(() => {
+    if (viewMode === 'devin') setTerminalOpen(false)
+  }, [viewMode])
 
   return (
-    <div className="app">
-      {/* 3-Point Perspective Laser-Trace Field (scaled by uncensored/abliteration level) */}
-      <PerspectiveLaserField level={effectiveLaserLevel} active={busy} mood={effectiveMood} />
-      {/* Ambient glitch background header — intensifies when agent is busy */}
-      <div className="matrix-glitch-title" data-active={busy} aria-hidden="true">
-        <div className="glitch-meta-tag">// SYSTEM: ABLITERATED // KERNEL: UNCONSTRAINED</div>
-        <span data-text="ABLITERATED">ABLITERATED</span>
-      </div>
-
-      {/* Top bar */}
-      <header>
-        <div className="header-brand">
+    <div className="app term-window">
+      {/* One bar: desk chrome lives here — no second header */}
+      <header className="term-titlebar">
+        <div className="term-titlebar-left">
+          <span className="term-lights" aria-hidden="true">
+            <i className="term-light close" />
+            <i className="term-light min" />
+            <i className="term-light max" />
+          </span>
           <button
             type="button"
             className="ghost btn-sm btn-session-toggle"
             onClick={() => setHistoryOpen(!historyOpen)}
             title="Chats (⌘B)"
           >
-            <span className="session-icon">≡</span>
             <span className="btn-label">Chats</span>
             <span className="history-count-badge-inline">{sessions.length}</span>
           </button>
-          <div className="brand-title-group">
-            <img src="/icons/icon-lightning.png" alt="Studio" className="brand-icon-img" />
-            <span className="brand-name">Abliterated <span className="boldface-em">Studio</span></span>
-          </div>
-          {/* Expandable Model Switcher Dropdown */}
-          <div className="fui-dropdown-container" ref={quickModelMenuRef}>
-            <button
-              type="button"
-              className="model-chip-button"
-              onClick={() => setQuickModelMenuOpen(!quickModelMenuOpen)}
-              title={`Model: ${settings.model}`}
-            >
-              <span className="model-chip-dot" />
-              <span className="model-chip-name">{settings.model.split('/').pop() || settings.model}</span>
-              <span className={`fui-chevron ${quickModelMenuOpen ? 'open' : ''}`}>▾</span>
-            </button>
-
-            {quickModelMenuOpen && (
-              <div className="fui-model-dropdown">
-                <div className="fui-menu-header" style={{ padding: '4px 8px' }}>
-                  <span className="fui-menu-title">Models</span>
-                  <span className="fui-menu-badge">{settings.provider.toUpperCase()}</span>
-                </div>
-                <div className="fui-model-search-wrap">
-                  <span className="fui-model-search-icon">🔍</span>
-                  <input
-                    type="text"
-                    className="fui-model-search-input"
-                    placeholder="Search models…"
-                    value={modelQuery}
-                    onChange={(e) => setModelQuery(e.target.value)}
-                    autoFocus
-                  />
-                </div>
-                <div className="fui-model-list">
-                  {(filteredModels.length ? filteredModels : models).slice(0, 15).map((id) => {
-                    const isSelected = settings.model === id
-                    const label = modelLabel(id)
-                    return (
-                      <button
-                        type="button"
-                        key={id}
-                        className={`fui-model-option ${isSelected ? 'selected' : ''}`}
-                        onClick={() => {
-                          persist({ ...settings, model: id })
-                          setQuickModelMenuOpen(false)
-                          showToast(`Model → ${label}`, { type: 'info' })
-                        }}
-                      >
-                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {isSelected ? '✓ ' : ''}{label}
-                        </span>
-                        <span style={{ fontSize: 9.5, opacity: 0.7, marginLeft: 8 }}>
-                          {id.includes('27b') ? '27B' : id.includes('70b') || id.includes('72b') ? '70B+' : 'STD'}
-                        </span>
-                      </button>
-                    )
-                  })}
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 4, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-                  <button
-                    type="button"
-                    className="ghost btn-sm"
-                    style={{ fontSize: 10, padding: '3px 6px' }}
-                    onClick={() => {
-                      setQuickModelMenuOpen(false)
-                      setSettingsOpen(true)
-                    }}
-                  >
-                    All models & settings…
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
         </div>
-
-        <div className="header-actions">
-          <MeshPulse
-            sparkHost={settings.sparkHost}
-            sandboxOnline={sandboxStatus?.online}
-            sandboxLatency={sandboxStatus?.latencyMs}
-            mempalaceOnline={mempalaceStatus?.online}
-            mempalaceLatency={mempalaceStatus?.latencyMs}
-          />
-          {settings.rainMode === 'auto' && (
-            <div
-              className="mood-chip"
-              data-mood={effectiveMood}
-              title={`Rain mood: ${MOOD_LABELS[effectiveMood]}`}
+        <span className="term-title" title={activeChatTitle}>
+          {activeChatTitle}
+        </span>
+        <div className="term-titlebar-right">
+          <label className="term-theme-pick">
+            <span className="term-theme-label">Theme</span>
+            <select
+              value={termTheme}
+              aria-label="Terminal theme"
+              onChange={(e) => setTermTheme(e.target.value)}
             >
-              <span className="mood-dot" />
-              {MOOD_LABELS[effectiveMood]}
+              {TERM_THEMES.map((theme) => (
+                <option key={theme.id} value={theme.id}>{theme.name}</option>
+              ))}
+            </select>
+          </label>
+          {viewMode === 'devin' && workChrome && (
+            <span className="work-chrome-meta" title="Workspace status">
+              <span>{workChrome.env}</span>
+              <span className="work-chrome-sep">·</span>
+              <span>{workChrome.milestones}</span>
+              <span className="work-chrome-sep">·</span>
+              <span className={workChrome.agentBusy ? 'work-chrome-busy' : 'work-chrome-idle'}>
+                {workChrome.agentBusy ? 'Active' : 'Idle'}
+              </span>
+            </span>
+          )}
+          {viewMode === 'devin' && (
+            <div className="fui-dropdown-container header-model-switch" ref={quickModelMenuRef}>
+              <button
+                type="button"
+                className="model-chip-button"
+                onClick={() => setQuickModelMenuOpen(!quickModelMenuOpen)}
+                title={`Model: ${settings.model}`}
+              >
+                <span className="model-chip-dot" />
+                <span className="model-chip-name">{settings.model.split('/').pop() || settings.model}</span>
+                <span className={`fui-chevron ${quickModelMenuOpen ? 'open' : ''}`}>▾</span>
+              </button>
+              {quickModelMenuOpen && (
+                <div className="fui-model-dropdown">
+                  <div className="fui-menu-header" style={{ padding: '4px 8px' }}>
+                    <span className="fui-menu-title">Models</span>
+                    <span className="fui-menu-badge">{settings.provider.toUpperCase()}</span>
+                  </div>
+                  <div className="fui-model-search-wrap">
+                    <span className="fui-model-search-icon">🔍</span>
+                    <input
+                      type="text"
+                      className="fui-model-search-input"
+                      placeholder="Search models…"
+                      value={modelQuery}
+                      onChange={(e) => setModelQuery(e.target.value)}
+                      autoFocus
+                    />
+                  </div>
+                  <div className="fui-model-list">
+                    {(filteredModels.length ? filteredModels : models).slice(0, 15).map((id) => {
+                      const isSelected = settings.model === id
+                      const label = modelLabel(id)
+                      return (
+                        <button
+                          type="button"
+                          key={id}
+                          className={`fui-model-option ${isSelected ? 'selected' : ''}`}
+                          onClick={() => {
+                            persist({ ...settings, model: id })
+                            setQuickModelMenuOpen(false)
+                            showToast(`Model → ${label}`, { type: 'info' })
+                          }}
+                        >
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {isSelected ? '✓ ' : ''}{label}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 4, borderTop: '1px solid #333' }}>
+                    <button
+                      type="button"
+                      className="ghost btn-sm"
+                      style={{ fontSize: 10, padding: '3px 6px' }}
+                      onClick={() => {
+                        setQuickModelMenuOpen(false)
+                        setSettingsOpen(true)
+                      }}
+                    >
+                      All models & settings…
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
-
-          {settings.laserMode !== 'off' && (
+          {viewMode === 'devin' && workChrome && (
+            <>
+              <button
+                type="button"
+                className={`ghost btn-sm header-text-btn ${workChrome.terminalVisible ? 'active' : ''}`}
+                onClick={() => workChrome.toggleTerminal()}
+                title={workChrome.terminalVisible ? 'Hide live PTY stream' : 'Show live PTY stream'}
+              >
+                Terminal
+              </button>
+              <button
+                type="button"
+                className="ghost btn-sm header-text-btn"
+                onClick={() => workChrome.newBrowser()}
+                title={
+                  workChrome.browserCapHit || workChrome.browserCount >= workChrome.browserCap
+                    ? `Browser cap: ${workChrome.browserCap} windows max`
+                    : 'Open another browser window for a separate agent run'
+                }
+              >
+                New browser
+              </button>
+            </>
+          )}
+          {viewMode === 'devin' && workChrome && (
             <button
               type="button"
-              className="laser-level-chip"
-              data-level={effectiveLaserLevel}
-              onClick={() => setSettingsOpen(true)}
-              title={`Abliteration Laser Grid: Level ${effectiveLaserLevel} (${ABLITERATION_LEVELS[effectiveLaserLevel].label} · ${ABLITERATION_LEVELS[effectiveLaserLevel].tag}) · Mode: ${settings.laserMode ?? 'auto'}. Click to configure.`}
+              className="ghost btn-sm header-text-btn"
+              onClick={() => workChrome.audit()}
+              disabled={workChrome.auditing}
+              title="Scan workspace git status and diff"
             >
-              <span className="laser-dot" />
-              <span className="laser-tag">{ABLITERATION_LEVELS[effectiveLaserLevel].label}</span>
+              {workChrome.auditing ? 'Auditing…' : 'Audit Diff'}
             </button>
           )}
-
-          {/* Expandable Subsystems & Operations Mega-Dropdown */}
-          <div className="fui-dropdown-container" ref={subsystemsMenuRef}>
-            <button
-              type="button"
-              className={`fui-menu-trigger-btn ${subsystemsMenuOpen ? 'active' : ''}`}
-              onClick={() => setSubsystemsMenuOpen(!subsystemsMenuOpen)}
-              title="More — terminal, files, export, commands"
-              aria-label="More"
-            >
-              <span className="fui-trigger-dot" />
-              <span aria-hidden="true">⋯</span>
-            </button>
-
-            {subsystemsMenuOpen && (
-              <div className="fui-dropdown-menu align-right">
-                <div className="fui-menu-header">
-                  <span className="fui-menu-title">Tools</span>
-                  <span className="fui-menu-badge">ONLINE</span>
-                </div>
-
-                {/* Section 1: Runtimes & Workspaces */}
-                <div className="fui-menu-section">
-                  <div className="fui-menu-section-label">Runtimes & files</div>
-                  <button
-                    type="button"
-                    className="fui-menu-item"
-                    onClick={() => {
-                      setTerminalOpen(!terminalOpen)
-                      setSubsystemsMenuOpen(false)
-                    }}
-                  >
-                    <span className="fui-item-icon">🐍</span>
-                    <div className="fui-item-info">
-                      <span className="fui-item-name">Terminal</span>
-                      <span className="fui-item-desc">{terminalOpen ? 'Close console drawer' : `Open bash console (${terminalLogs.length} logs)`}</span>
-                    </div>
-                    <span className="fui-item-tag">{bashTarget.toUpperCase()}</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    className="fui-menu-item"
-                    onClick={() => {
-                      setExplorerOpen(true)
-                      setSubsystemsMenuOpen(false)
-                    }}
-                  >
-                    <span className="fui-item-icon">🗂️</span>
-                    <div className="fui-item-info">
-                      <span className="fui-item-name">Workspace Explorer</span>
-                      <span className="fui-item-desc">{settings.workspaceDir ? settings.workspaceDir.replace('/Users/adminuser', '~') : '~/AIUI'}</span>
-                    </div>
-                    <kbd className="fui-item-kbd">⌘O</kbd>
-                  </button>
-
-                  <button
-                    type="button"
-                    className="fui-menu-item"
-                    onClick={() => {
-                      setTerminalOpen(true)
-                      void runBashCommand('uname -a && uptime && python3 --version', bashTarget)
-                      setSubsystemsMenuOpen(false)
-                    }}
-                  >
-                    <span className="fui-item-icon">🩺</span>
-                    <div className="fui-item-info">
-                      <span className="fui-item-name">Health check</span>
-                      <span className="fui-item-desc">Sweep kernel, uptime, and python health</span>
-                    </div>
-                    <span className="fui-item-tag">HEALTH</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    className="fui-menu-item"
-                    onClick={() => {
-                      handleInspectDuckDb()
-                      setSubsystemsMenuOpen(false)
-                    }}
-                  >
-                    <span className="fui-item-icon">🦆</span>
-                    <div className="fui-item-info">
-                      <span className="fui-item-name">DuckDB inspector</span>
-                      <span className="fui-item-desc">Inspect columnar NVMe database</span>
-                    </div>
-                    <span className="fui-item-tag">DUCKDB</span>
-                  </button>
-                </div>
-
-                {/* Section 2: Missions & Sessions */}
-                <div className="fui-menu-section">
-                  <div className="fui-menu-section-label">Chats & export</div>
-                  <button
-                    type="button"
-                    className="fui-menu-item"
-                    onClick={() => {
-                      setHistoryOpen(true)
-                      setSubsystemsMenuOpen(false)
-                    }}
-                  >
-                    <span className="fui-item-icon">≡</span>
-                    <div className="fui-item-info">
-                      <span className="fui-item-name">Chat history</span>
-                      <span className="fui-item-desc">{sessions.length} saved conversations</span>
-                    </div>
-                    <kbd className="fui-item-kbd">⌘B</kbd>
-                  </button>
-
-                  <button
-                    type="button"
-                    className="fui-menu-item"
-                    onClick={() => {
-                      handleBranchSession()
-                      setSubsystemsMenuOpen(false)
-                    }}
-                  >
-                    <span className="fui-item-icon">🌿</span>
-                    <div className="fui-item-info">
-                      <span className="fui-item-name">Fork this chat</span>
-                      <span className="fui-item-desc">Clone conversation into an independent thread</span>
-                    </div>
-                    <span className="fui-item-tag">FORK</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    className="fui-menu-item"
-                    onClick={() => {
-                      handleExportZip()
-                      setSubsystemsMenuOpen(false)
-                    }}
-                  >
-                    <span className="fui-item-icon">📦</span>
-                    <div className="fui-item-info">
-                      <span className="fui-item-name">Export project ZIP</span>
-                      <span className="fui-item-desc">Download scripts, logs & telemetry</span>
-                    </div>
-                    <span className="fui-item-tag">ZIP</span>
-                  </button>
-                </div>
-
-                {/* Section 3: System & Tools */}
-                <div className="fui-menu-section">
-                  <div className="fui-menu-section-label">System</div>
-                  <button
-                    type="button"
-                    className="fui-menu-item"
-                    onClick={() => {
-                      setPaletteOpen(true)
-                      setSubsystemsMenuOpen(false)
-                    }}
-                  >
-                    <span className="fui-item-icon">⌘</span>
-                    <div className="fui-item-info">
-                      <span className="fui-item-name">Command palette</span>
-                      <span className="fui-item-desc">Fuzzy command execution</span>
-                    </div>
-                    <kbd className="fui-item-kbd">⌘K</kbd>
-                  </button>
-
-                  <button
-                    type="button"
-                    className="fui-menu-item"
-                    onClick={() => {
-                      setSettingsOpen(true)
-                      setSubsystemsMenuOpen(false)
-                    }}
-                  >
-                    <span className="fui-item-icon">⚙️</span>
-                    <div className="fui-item-info">
-                      <span className="fui-item-name">Settings</span>
-                      <span className="fui-item-desc">Models, endpoints, API keys & RAG</span>
-                    </div>
-                    <kbd className="fui-item-kbd">⌘,</kbd>
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-
           <button
             type="button"
-            className="ghost btn-sm btn-icon"
+            className={`fui-view-seg-btn header-text-btn ${viewMode === 'devin' ? 'active' : ''}`}
+            onClick={() => setViewMode(viewMode === 'devin' ? 'studio' : 'devin')}
+            aria-pressed={viewMode === 'devin'}
+            title={viewMode === 'devin' ? 'Leave the workspace and return to Studio' : 'Open the workspace'}
+          >
+            {viewMode === 'devin' ? 'Desk' : 'Work'}
+          </button>
+          <button
+            type="button"
+            className="ghost btn-sm btn-icon header-settings-btn"
             onClick={() => setSettingsOpen(true)}
             title="Settings (⌘,)"
             aria-label="Settings"
           >
-            ⚙
+            Settings
           </button>
         </div>
       </header>
 
-      {/* Main Chat Stage */}
-      <ChatStage
-        messages={messages}
-        sparkHost={settings.sparkHost}
-        sandboxOnline={sandboxStatus?.online}
-        mempalaceOnline={mempalaceStatus?.online}
-        onSelectPrompt={(prompt) => {
-          setInput(prompt)
-          void sendWithText(prompt)
-        }}
-        gatedNotice={gatedNotice}
-        onSwitchUngated={(model) => void handleSwitchUngated(model)}
-        inlineExecResults={inlineExecResults}
-        executingInlineKey={executingInlineKey}
-        copiedCellKey={copiedCellKey}
-        executingCmd={executingCmd}
-        onCopyCode={(cellKey, code) => {
-          navigator.clipboard.writeText(code)
-          setCopiedCellKey(cellKey)
-          showToast('Copied', { type: 'success' })
-          setTimeout(() => setCopiedCellKey((c) => (c === cellKey ? null : c)), 2000)
-        }}
-        onRunCode={async (cellKey, code) => {
-          setExecutingInlineKey(cellKey)
-          const cmd = code.trim().replace(/^\$\s+/, '')
-          const res = await runBashCommand(cmd, bashTarget)
-          setInlineExecResults((prev) => ({ ...prev, [cellKey]: res }))
-          setExecutingInlineKey(null)
-        }}
-        onAutoHeal={(code, err) => handleAutoHeal(code, err)}
-        onCopyMessage={(id, content) => {
-          navigator.clipboard.writeText(content)
-          setCopiedCellKey(`msg_${id}`)
-          showToast('Copied', { type: 'success' })
-          setTimeout(() => setCopiedCellKey((c) => (c === `msg_${id}` ? null : c)), 2000)
-        }}
-        scrollToken={chatScrollToken}
-        streamingMessageId={
-          busy && messages.length && messages[messages.length - 1]?.role === 'assistant'
-            ? messages[messages.length - 1].id
-            : undefined
-        }
-        onFollowUp={(prompt) => {
-          if (prompt === '__switch_provider_spark__') {
-            persist({
-              ...settings,
-              provider: 'spark',
-              model: SPARK_PREFER[0],
-            })
-            showToast('Switched to Spark · qwen-abliterated', { type: 'success' })
-            return
-          }
-          if (busy) {
-            stop()
-            setInput(prompt)
-            showToast('Stopped — suggestion loaded in composer', { type: 'info' })
-            return
-          }
-          void sendWithText(prompt)
-        }}
-      />
+      {/* Main Workspace Stage: AIUI workspace or Studio Chat */}
+      {viewMode === 'devin' ? (
+        <DevinQuadPaneView
+          messages={messages}
+          busy={busy}
+          onSend={async (text) => {
+            await sendWithText(text)
+          }}
+          onStop={stop}
+          terminalLogs={terminalLogs}
+          onClearTerminalLogs={() => setTerminalLogs([])}
+          onRunTerminalCommand={runBashCommand}
+          executingCmd={executingCmd}
+          bashTarget={bashTarget}
+          previewUrl=""
+          onSwitchToStudio={() => setViewMode('studio')}
+          activeWorkspaceEnvId={activeWorkspaceEnvId}
+          onWorkChrome={setWorkChrome}
+        />
+      ) : (
+        <div className={messages.length === 1 && messages[0]?.id === 'welcome' ? 'studio-desk' : 'studio-stack'}>
+          {/* Main Chat Stage */}
+          <ChatStage
+            messages={messages}
+            sparkHost={settings.sparkHost}
+            sandboxOnline={sandboxStatus?.online}
+            mempalaceOnline={mempalaceStatus?.online}
+            onSelectPrompt={(prompt) => {
+              if (prompt === '/devin' || prompt === '/aiui') {
+                setViewMode('devin')
+                return
+              }
+              setInput(prompt)
+              requestAnimationFrame(() => {
+                document.querySelector<HTMLTextAreaElement>('.composer-textarea')?.focus()
+              })
+            }}
+            onChooseMode={(mode) => {
+              persist(applyAssistMode(settings, mode))
+              handleAutoAblitToggle(mode !== 'chat')
+              const labels = { chat: 'Talk', agent: 'Do it', deep: 'Build it' } as const
+              showToast(`Mode: ${labels[mode]}`, { type: 'info' })
+            }}
+            assistMode={assistMode}
+            gatedNotice={gatedNotice}
+            onSwitchUngated={(model) => void handleSwitchUngated(model)}
+            inlineExecResults={inlineExecResults}
+            executingInlineKey={executingInlineKey}
+            copiedCellKey={copiedCellKey}
+            executingCmd={executingCmd}
+            onCopyCode={(cellKey, code) => {
+              navigator.clipboard.writeText(code)
+              setCopiedCellKey(cellKey)
+              showToast('Copied', { type: 'success' })
+              setTimeout(() => setCopiedCellKey((c) => (c === cellKey ? null : c)), 2000)
+            }}
+            onRunCode={async (cellKey, code) => {
+              setExecutingInlineKey(cellKey)
+              const cmd = code.trim().replace(/^\$\s+/, '')
+              const res = await runBashCommand(cmd, bashTarget)
+              setInlineExecResults((prev) => ({ ...prev, [cellKey]: res }))
+              setExecutingInlineKey(null)
+            }}
+            onAutoHeal={(code, err) => handleAutoHeal(code, err)}
+            onCopyMessage={(id, content) => {
+              navigator.clipboard.writeText(content)
+              setCopiedCellKey(`msg_${id}`)
+              showToast('Copied', { type: 'success' })
+              setTimeout(() => setCopiedCellKey((c) => (c === `msg_${id}` ? null : c)), 2000)
+            }}
+            scrollToken={chatScrollToken}
+            streamingMessageId={
+              busy && messages.length && messages[messages.length - 1]?.role === 'assistant'
+                ? messages[messages.length - 1].id
+                : undefined
+            }
+            viewMode={viewMode}
+            onFollowUp={(prompt) => {
+              if (prompt === '__switch_provider_spark__') {
+                persist({
+                  ...settings,
+                  provider: 'spark',
+                  model: SPARK_PREFER[0],
+                })
+                showToast('Switched to Spark · qwen-abliterated', { type: 'success' })
+                return
+              }
+              if (busy) {
+                stop()
+                setInput(prompt)
+                showToast('Stopped — suggestion loaded in composer', { type: 'info' })
+                return
+              }
+              void sendWithText(prompt)
+            }}
+          />
 
-      <Composer
-        error={error}
-        modelsError={modelsError}
-        agentStatus={agentStatus}
-        antiLoopSuggestions={antiLoopSuggestions}
-        onAntiLoopSuggestion={(prompt) => {
-          setAntiLoopSuggestions(null)
-          if (busy) {
-            stop()
-            setInput(prompt)
-            showToast('Stopped — suggestion loaded in composer', { type: 'info' })
-            return
-          }
-          void sendWithText(prompt)
-        }}
-        stop={stop}
-        settings={settings}
-        persist={persist}
-        showToast={showToast}
-        onOpenTerminal={() => setTerminalOpen(true)}
-        composerAdvanced={composerAdvanced}
-        setComposerAdvanced={setComposerAdvanced}
-        modelQuery={modelQuery}
-        setModelQuery={setModelQuery}
-        filteredModels={filteredModels}
-        models={models}
-        gatedIds={gatedIds}
-        bashTarget={bashTarget}
-        handleTargetChange={handleTargetChange}
-        busy={busy}
-        showModelSearch={showModelSearch}
-        setShowModelSearch={setShowModelSearch}
-        hideGated={hideGated}
-        setHideGated={setHideGated}
-        autoAblit={autoAblit}
-        handleAutoAblitToggle={handleAutoAblitToggle}
-        paramsAccordionOpen={paramsAccordionOpen}
-        setParamsAccordionOpen={setParamsAccordionOpen}
-        autoRecall={autoRecall}
-        handleAutoRecallToggle={handleAutoRecallToggle}
-        autoCheckpoint={autoCheckpoint}
-        handleAutoCheckpointToggle={handleAutoCheckpointToggle}
-        input={input}
-        setInput={setInput}
-        send={() => void send()}
-        handleInspectDuckDb={handleInspectDuckDb}
-        handleBranchSession={handleBranchSession}
-      />
+          <Composer
+            error={error}
+            modelsError={modelsError}
+            agentStatus={agentStatus}
+            antiLoopSuggestions={antiLoopSuggestions}
+            onAntiLoopSuggestion={(prompt) => {
+              setAntiLoopSuggestions(null)
+              if (busy) {
+                stop()
+                setInput(prompt)
+                showToast('Stopped — suggestion loaded in composer', { type: 'info' })
+                return
+              }
+              void sendWithText(prompt)
+            }}
+            stop={stop}
+            settings={settings}
+            persist={persist}
+            showToast={showToast}
+            composerAdvanced={composerAdvanced}
+            setComposerAdvanced={setComposerAdvanced}
+            modelQuery={modelQuery}
+            setModelQuery={setModelQuery}
+            filteredModels={filteredModels}
+            models={models}
+            gatedIds={gatedIds}
+            bashTarget={bashTarget}
+            handleTargetChange={handleTargetChange}
+            busy={busy}
+            showModelSearch={showModelSearch}
+            setShowModelSearch={setShowModelSearch}
+            hideGated={hideGated}
+            setHideGated={setHideGated}
+            autoAblit={autoAblit}
+            handleAutoAblitToggle={handleAutoAblitToggle}
+            paramsAccordionOpen={paramsAccordionOpen}
+            setParamsAccordionOpen={setParamsAccordionOpen}
+            autoRecall={autoRecall}
+            handleAutoRecallToggle={handleAutoRecallToggle}
+            autoCheckpoint={autoCheckpoint}
+            handleAutoCheckpointToggle={handleAutoCheckpointToggle}
+            input={input}
+            setInput={setInput}
+            send={() => void send()}
+            showAssistMode={!(messages.length === 1 && messages[0]?.id === 'welcome')}
+            onSendPrompt={(prompt) => void sendWithText(prompt)}
+          />
+        </div>
+      )}
 
       <TerminalDrawer
         open={terminalOpen}
@@ -2026,6 +2208,9 @@ Assistant: ${finalContent}`,
         toggleCollapseOutput={toggleCollapseOutput}
         activeWorkspaceDir={settings.workspaceDir}
         onOpenExplorer={() => setExplorerOpen(true)}
+        onOpenSshTool={() => setSshToolOpen(true)}
+        onOpenBase64Tool={() => setBase64ToolOpen(true)}
+        onOpenDynamicTools={() => setDynamicToolsOpen(true)}
       />
 
       <SettingsSheet
@@ -2084,6 +2269,20 @@ Assistant: ${finalContent}`,
         clusterRag={settings.clusterRag}
         activeWorkspaceDir={settings.workspaceDir}
         onChangeWorkspaceDir={handleWorkspaceDirChange}
+        onSendPrompt={(prompt) => void sendWithText(prompt)}
+        onOpenSshTool={() => setSshToolOpen(true)}
+        onOpenBase64Tool={() => setBase64ToolOpen(true)}
+        onOpenDynamicTools={() => setDynamicToolsOpen(true)}
+        onToggleWorkTerminal={
+          viewMode === 'devin' && workChrome ? () => workChrome.toggleTerminal() : undefined
+        }
+        workTerminalVisible={workChrome?.terminalVisible}
+        onNewBrowserWindow={
+          viewMode === 'devin' && workChrome ? () => workChrome.newBrowser() : undefined
+        }
+        browserWindowCount={workChrome?.browserCount}
+        browserWindowCap={workChrome?.browserCap}
+        browserCapHit={workChrome?.browserCapHit}
       />
 
       {/* Remote NVMe & Workspace Explorer */}
@@ -2094,6 +2293,48 @@ Assistant: ${finalContent}`,
         onSwitchTarget={handleTargetChange}
         activeWorkspaceDir={settings.workspaceDir}
         onChangeWorkspaceDir={handleWorkspaceDirChange}
+        envId={activeWorkspaceEnvId || getActiveWorkspaceEnvId()}
+      />
+
+      {/* Remote SSH Cluster Runner Studio */}
+      <RemoteClusterRunner
+        open={sshToolOpen}
+        onClose={() => setSshToolOpen(false)}
+        onRunBash={runBashCommand}
+        onPinToChat={(content) => {
+          setInput((prev) => (prev ? `${prev}\n\n${content}` : content))
+          showToast('Remote cluster output pinned to composer', { type: 'info' })
+        }}
+        onSendToBase64={() => {
+          setBase64ToolOpen(true)
+        }}
+      />
+
+      {/* Base64 Tactical Studio */}
+      <Base64Studio
+        open={base64ToolOpen}
+        onClose={() => setBase64ToolOpen(false)}
+        onInsertComposer={(text) => {
+          setInput((prev) => (prev ? `${prev} ${text}` : text))
+          showToast('Base64 payload inserted into composer', { type: 'info' })
+        }}
+        onSendToSshRunner={() => {
+          setSshToolOpen(true)
+        }}
+      />
+
+      {/* Persistent Cluster & GPU Telemetry Bar (Studio View) */}
+      {viewMode === 'studio' && (
+        <ClusterStatusBar
+          sandboxHealthy={sandboxStatus?.online !== false}
+          mempalaceHealthy={mempalaceStatus?.online !== false}
+        />
+      )}
+
+      {/* Dynamic Tools Architecture & JIT Extension Modal */}
+      <DynamicToolsModal
+        open={dynamicToolsOpen}
+        onClose={() => setDynamicToolsOpen(false)}
       />
 
       {/* Chat History & Multi-Session Drawer */}

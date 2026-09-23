@@ -1,338 +1,504 @@
-export type ProviderId = 'featherless' | 'abliteration' | 'spark'
+/**
+ * Providers module - manages AI model providers, settings storage, endpoint routing,
+ * and ProviderManager lifecycle supervision (initialization, health checks, failover).
+ */
 
-/** Reactive rain mood mode. auto = derive from conversation, off = static, manual = user-picked. */
-export type RainMode = 'auto' | 'off' | 'manual'
+export type ProviderId = 'spark' | 'featherless' | 'abliteration';
+
+export type SparkRoute = 'lan' | 'tailscale' | 'both';
+
+export type RainMode = 'auto' | 'off' | 'manual';
+export type LaserMode = 'auto' | 'off' | 'manual';
 
 export interface ProviderConfig {
-  id: ProviderId
-  name: string
-  baseUrl: string
-  apiKey: string
-  /** Local Spark / vLLM does not require a cloud API key. */
-  requiresApiKey: boolean
-}
-
-export const FEATHERLESS_DIRECT_BASE = 'https://api.featherless.ai/v1'
-/** Local cloud-key-proxy — injects FEATHERLESS_API_KEY server-side (avoids browser Cloudflare 1010). */
-export const FEATHERLESS_PROXY_BASE = 'http://127.0.0.1:17332/featherless/v1'
-
-export function usesCloudKeyProxy(baseUrl: string): boolean {
-  try {
-    const u = new URL(baseUrl)
-    const hostOk = u.hostname === '127.0.0.1' || u.hostname === 'localhost'
-    return hostOk && u.port === '17332' && /\/(featherless|abliteration)(\/|$)/.test(u.pathname)
-  } catch {
-    return false
-  }
-}
-
-export const FEATHERLESS_PREFER = [
-  'Qwen/Qwen2.5-7B-Instruct',
-  'mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated',
-  'Qwen/Qwen2.5-32B-Instruct',
-  'Qwen/Qwen2.5-72B-Instruct',
-  'mistralai/Mistral-Small-24B-Instruct-2501',
-  'mistralai/Mistral-7B-Instruct-v0.3',
-  'huihui-ai/Llama-3.3-70B-Instruct-abliterated',
-  'Qwen/Qwen2.5-Coder-32B-Instruct',
-  'Qwen/QwQ-32B',
-  'Qwen/Qwen3-32B',
-  'Qwen/Qwen3-235B-A22B',
-  'deepseek-ai/DeepSeek-V3.2',
-  'deepseek-ai/DeepSeek-R1-0528',
-  'deepseek-ai/DeepSeek-R1-Distill-Llama-70B',
-  'mistralai/Mistral-Large-Instruct-2411',
-  'microsoft/phi-4',
-  'NousResearch/Hermes-3-Llama-3.1-70B',
-  'Sao10K/L3-8B-Stheno-v3.2',
-  'Undi95/Meta-Llama-3.1-8B-Instruct-OAS',
-  'nvidia/Llama-3.1-Nemotron-70B-Instruct-HF',
-]
-
-/** Official Meta/Gemma IDs that need HuggingFace OAuth on Featherless. */
-export const FEATHERLESS_GATED_PREFER = [
-  'meta-llama/Meta-Llama-3.1-8B-Instruct',
-  'meta-llama/Meta-Llama-3.1-70B-Instruct',
-  'meta-llama/Llama-3.3-70B-Instruct',
-  'meta-llama/Llama-3.2-3B-Instruct',
-  'google/gemma-3-27b-it',
-]
-
-export const UNGATED_ALTERNATIVE: Record<string, string> = {
-  'meta-llama/Meta-Llama-3.1-8B-Instruct': 'mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated',
-  'meta-llama/Meta-Llama-3.1-70B-Instruct': 'huihui-ai/Llama-3.3-70B-Instruct-abliterated',
-  'meta-llama/Llama-3.3-70B-Instruct': 'huihui-ai/Llama-3.3-70B-Instruct-abliterated',
-  'meta-llama/Llama-3.2-3B-Instruct': 'Qwen/Qwen2.5-7B-Instruct',
-  'google/gemma-3-27b-it': 'Qwen/Qwen2.5-32B-Instruct',
-}
-
-export function isGatedModelId(id: string): boolean {
-  if (!id) return false
-  if (FEATHERLESS_GATED_PREFER.includes(id)) return true
-  // Meta official orgs require HF oauth on featherless
-  if (id.startsWith('meta-llama/') && !id.includes('abliterated')) return true
-  return false
-}
-
-export const ABLITERATION_PREFER = [
-  'abliterated-model',
-  'abliterated-model-large',
-  'abliterated-model-large-v2',
-]
-
-/** GX10 / vLLM served model ids (Qwen3.6-35B-A3B Abliterated NVFP4+MTP). */
-export const SPARK_PREFER = ['qwen-abliterated']
-
-/** Friendly labels for the model picker (ids still sent to the API). */
-export const MODEL_LABELS: Record<string, string> = {
-  'qwen-abliterated': 'Qwen3.6-35B-A3B Abliterated NVFP4+MTP',
-  'qwen-flash': 'Qwen3.6-35B-A3B Abliterated NVFP4+MTP (alias → qwen-abliterated)',
-}
-
-export function modelLabel(id: string): string {
-  return MODEL_LABELS[id] || id
-}
-
-export const SPARK_DEFAULT_HOST = '192.168.4.103'
-export const SPARK_DEFAULT_PORT = 8000
-
-const STORAGE_KEY = 'abliterated_web_api_settings_v1'
-
-import type { AbliterationLevel, LaserMode } from './abliterationLevel'
-export type { AbliterationLevel, LaserMode } from './abliterationLevel'
-
-export interface StoredSettings {
-  provider: ProviderId
-  featherlessBaseUrl: string
-  featherlessApiKey: string
-  abliterationBaseUrl: string
-  abliterationApiKey: string
-  /** Spark LAN host (no scheme), e.g. 192.168.4.103 */
-  sparkHost: string
-  sparkPort: number
+  id: ProviderId;
+  name: string;
+  baseUrl: string;
+  /** Tried in order when baseUrl refuses the connection or returns 502/503/504. */
+  fallbackBaseUrls?: string[];
   /**
-   * When true (default), browser on localhost / LAN uses cloud-key-proxy
-   * http://127.0.0.1:17332/spark/<host>/<port>/v1 — same pattern as Expo web.
+   * One chain per Spark NIC. Chains are opened together and the first
+   * successful response is streamed. Each chain falls through its own URLs.
    */
-  sparkUseProxy: boolean
-  /** Optional; Spark/vLLM usually needs none. */
-  sparkApiKey: string
-  model: string
-  agentMode: boolean
-  deepBuild: boolean
-  clusterRag?: boolean
-  temperature?: number
-  maxTokens?: number
-  agentMaxRounds?: number
-  customSystemPrompt?: string
-  rainMode?: RainMode
-  rainMoodManual?: string
-  laserMode?: LaserMode
-  laserLevelManual?: AbliterationLevel
-  workspaceDir?: string
+  endpointGroups?: string[][];
+  apiKey?: string;
+  requiresApiKey: boolean;
+}
+
+export type ProviderStatus =
+  | 'uninitialized'
+  | 'initializing'
+  | 'healthy'
+  | 'degraded'
+  | 'offline'
+  | 'shutting_down';
+
+export interface ProviderHealth {
+  status: ProviderStatus;
+  latencyMs?: number;
+  lastChecked?: number;
+  error?: string;
+}
+
+export interface ProviderEntry {
+  name: string;
+  provider: any;
+  priority?: number;
+  health: ProviderHealth;
 }
 
 /**
- * Resolve OpenAI-compatible /v1 base for Spark.
- * Prefer :17332/spark/... proxy when the page is localhost/LAN http (CORS / Firefox LNA).
+ * Enterprise ProviderManager with full lifecycle supervision, health monitoring, and automatic failover.
  */
+export class ProviderManager {
+  private providers: Map<string, ProviderEntry>;
+  private activeProviderName: string = 'default';
+  private listeners: Map<string, Set<Function>>;
+
+  constructor() {
+    this.providers = new Map();
+    this.listeners = new Map();
+  }
+
+  register(name: string, provider: any, priority = 10): void {
+    this.providers.set(name, {
+      name,
+      provider,
+      priority,
+      health: { status: 'uninitialized' },
+    });
+    if (this.providers.size === 1) {
+      this.activeProviderName = name;
+    }
+    this.emit('registered', { name, provider });
+  }
+
+  unregister(name: string): boolean {
+    const deleted = this.providers.delete(name);
+    if (deleted && this.activeProviderName === name) {
+      const next = this.providers.keys().next().value;
+      this.activeProviderName = next || 'default';
+    }
+    return deleted;
+  }
+
+  async init(): Promise<void> {
+    for (const [, entry] of this.providers.entries()) {
+      entry.health.status = 'initializing';
+      if (typeof entry.provider?.init === 'function') {
+        try {
+          await entry.provider.init();
+          entry.health.status = 'healthy';
+        } catch (err: any) {
+          entry.health.status = 'degraded';
+          entry.health.error = err.message;
+        }
+      } else {
+        entry.health.status = 'healthy';
+      }
+      entry.health.lastChecked = Date.now();
+    }
+    this.emit('initialized', { count: this.providers.size });
+  }
+
+  async healthCheck(name?: string): Promise<Record<string, ProviderHealth>> {
+    const targets = name
+      ? ([this.providers.get(name)].filter(Boolean) as ProviderEntry[])
+      : Array.from(this.providers.values());
+    const results: Record<string, ProviderHealth> = {};
+
+    for (const entry of targets) {
+      const t0 = performance.now();
+      try {
+        if (typeof entry.provider?.healthCheck === 'function') {
+          const healthy = await entry.provider.healthCheck();
+          entry.health.status = healthy ? 'healthy' : 'degraded';
+        } else if (entry.provider?.baseUrl) {
+          const res = await fetch(`${entry.provider.baseUrl}/models`, {
+            signal: AbortSignal.timeout(3000),
+          });
+          entry.health.status = res.ok ? 'healthy' : 'degraded';
+        } else {
+          entry.health.status = 'healthy';
+        }
+        entry.health.latencyMs = Math.round(performance.now() - t0);
+        entry.health.error = undefined;
+      } catch (err: any) {
+        entry.health.status = 'offline';
+        entry.health.latencyMs = Math.round(performance.now() - t0);
+        entry.health.error = err.message;
+      }
+      entry.health.lastChecked = Date.now();
+      results[entry.name] = { ...entry.health };
+    }
+
+    return results;
+  }
+
+  get(name: string): any {
+    const entry = this.providers.get(name);
+    if (entry && entry.health.status !== 'offline') {
+      return entry.provider;
+    }
+    return this.getDefaultProvider();
+  }
+
+  getActive(): any {
+    return this.get(this.activeProviderName);
+  }
+
+  getActiveName(): string {
+    return this.activeProviderName;
+  }
+
+  setActive(name: string): boolean {
+    if (this.providers.has(name)) {
+      const prev = this.activeProviderName;
+      this.activeProviderName = name;
+      this.emit('active_changed', { from: prev, to: name });
+      return true;
+    }
+    return false;
+  }
+
+  failover(failedName?: string): string | null {
+    const current = failedName || this.activeProviderName;
+    const currentEntry = this.providers.get(current);
+    if (currentEntry) {
+      currentEntry.health.status = 'degraded';
+    }
+
+    const candidates = Array.from(this.providers.values())
+      .filter((e) => e.name !== current && e.health.status !== 'offline')
+      .sort((a, b) => (b.priority || 0) - (a.priority || 0));
+
+    if (candidates.length > 0) {
+      const next = candidates[0];
+      this.activeProviderName = next.name;
+      this.emit('failover', { from: current, to: next.name });
+      return next.name;
+    }
+
+    return null;
+  }
+
+  async shutdown(): Promise<void> {
+    for (const [, entry] of this.providers.entries()) {
+      entry.health.status = 'shutting_down';
+      if (typeof entry.provider?.shutdown === 'function') {
+        try {
+          await entry.provider.shutdown();
+        } catch {}
+      }
+      entry.health.status = 'offline';
+    }
+    this.emit('shutdown', {});
+  }
+
+  getAll(): Map<string, any> {
+    const map = new Map<string, any>();
+    for (const [k, v] of this.providers.entries()) {
+      map.set(k, v.provider);
+    }
+    return map;
+  }
+
+  getStatus(): Record<string, ProviderHealth> {
+    const status: Record<string, ProviderHealth> = {};
+    for (const [name, entry] of this.providers.entries()) {
+      status[name] = { ...entry.health };
+    }
+    return status;
+  }
+
+  on(event: string, fn: Function): () => void {
+    if (!this.listeners.has(event)) {
+      this.listeners.set(event, new Set());
+    }
+    this.listeners.get(event)!.add(fn);
+    return () => this.listeners.get(event)?.delete(fn);
+  }
+
+  private emit(event: string, payload: any): void {
+    const set = this.listeners.get(event);
+    if (set) {
+      for (const fn of set) {
+        try {
+          fn(payload);
+        } catch {}
+      }
+    }
+  }
+
+  private getDefaultProvider(): any {
+    const first = this.providers.values().next().value;
+    return first?.provider || { type: 'default', enabled: true };
+  }
+}
+
+// ------------------------------------------------------------------------------
+// Settings & Provider Configuration (Preserving App.tsx Compatibility)
+// ------------------------------------------------------------------------------
+
+export const SPARK_DEFAULT_HOST = '192.168.4.103';
+export const SPARK_DEFAULT_PORT = 8000;
+/** Tailscale address of the same DGX. Used when the LAN NIC is unreachable. */
+export const SPARK_TAILSCALE_HOST = '100.66.147.53';
+/** Local cloud-key-proxy. Spark routes are /spark/<host>/<port>/v1. */
+export const SPARK_KEY_PROXY_ORIGIN = 'http://127.0.0.1:17332';
+export const FEATHERLESS_PROXY_BASE = 'http://127.0.0.1:17330/v1';
+
+export const SPARK_PREFER = [
+  'qwen-abliterated',
+  'Qwen/Qwen2.5-Coder-32B-Instruct',
+  'Qwen/Qwen2.5-32B-Instruct',
+];
+
+export const FEATHERLESS_PREFER = [
+  'Qwen/Qwen2.5-Coder-32B-Instruct',
+  'mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated',
+];
+
+export const FEATHERLESS_GATED_PREFER = [
+  'meta-llama/Meta-Llama-3.1-8B-Instruct',
+  'meta-llama/Meta-Llama-3.1-70B-Instruct',
+];
+
+export const ABLITERATION_PREFER = [
+  'mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated',
+];
+
+export const UNGATED_ALTERNATIVE: Record<string, string> = {
+  'meta-llama/Meta-Llama-3.1-8B-Instruct': 'mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated',
+  'meta-llama/Meta-Llama-3.1-70B-Instruct': 'mlabonne/Meta-Llama-3.1-8B-Instruct-abliterated',
+};
+
+export interface StoredSettings {
+  provider: ProviderId;
+  featherlessBaseUrl: string;
+  featherlessApiKey: string;
+  abliterationBaseUrl: string;
+  abliterationApiKey: string;
+  sparkHost: string;
+  sparkPort: number;
+  sparkUseProxy: boolean;
+  /** LAN only, Tailscale only, or both NICs raced for the first live stream. */
+  sparkRoute: SparkRoute;
+  sparkApiKey: string;
+  model: string;
+  agentMode: boolean;
+  deepBuild: boolean;
+  clusterRag?: boolean;
+  temperature?: number;
+  maxTokens?: number;
+  agentMaxRounds?: number;
+  customSystemPrompt?: string;
+  rainMode?: string;
+  rainMoodManual?: string;
+  laserMode?: string;
+  laserLevelManual?: number;
+  workspaceDir?: string;
+  /** When true (default), chat loop may pull response optimizer nudges/policy. */
+  optimizeChatResponses?: boolean;
+}
+
+const STORAGE_KEY = 'aiui_settings_v1';
+
+export function isGatedModelId(modelId: string): boolean {
+  return FEATHERLESS_GATED_PREFER.includes(modelId);
+}
+
+export function modelLabel(modelId: string): string {
+  if (!modelId) return 'Unknown';
+  return modelId.split('/').pop() || modelId;
+}
+
+export function normalizeSparkHost(host: string): string {
+  return String(host || SPARK_DEFAULT_HOST)
+    .trim()
+    .replace(/^https?:\/\//, '')
+    .split('/')[0]
+    .split(':')[0];
+}
+
+function browserDevPort(): string {
+  if (typeof window === 'undefined') return '';
+  return window.location?.port || '';
+}
+
+export function normalizeSparkRoute(value: unknown): SparkRoute {
+  if (value === 'lan' || value === 'tailscale' || value === 'both') return value;
+  return 'both';
+}
+
+function urlsForSparkHost(host: string, port: number, useProxy: boolean): string[] {
+  const urls: string[] = [];
+  const onVite = browserDevPort() === '5173' || browserDevPort() === '4173';
+  // Same-origin prefixes are fixed in vite.config.ts, so they only apply to the baked hosts.
+  if (useProxy && onVite && host === SPARK_DEFAULT_HOST) urls.push('/vllm-lan/v1');
+  if (useProxy && onVite && host === SPARK_TAILSCALE_HOST) urls.push('/vllm-ts/v1');
+  if (useProxy) urls.push(`${SPARK_KEY_PROXY_ORIGIN}/spark/${host}/${port}/v1`);
+  urls.push(`http://${host}:${port}/v1`);
+  return urls;
+}
+
+/** Hosts selected by the Spark route switch. `both` races LAN and Tailscale. */
+export function sparkHostsForRoute(route: SparkRoute, host?: string): string[] {
+  const lan = normalizeSparkHost(host || SPARK_DEFAULT_HOST);
+  if (route === 'tailscale') return [SPARK_TAILSCALE_HOST];
+  if (route === 'lan') return [lan];
+  const hosts = [lan];
+  if (!hosts.includes(SPARK_TAILSCALE_HOST)) hosts.push(SPARK_TAILSCALE_HOST);
+  return hosts;
+}
+
+/**
+ * One fallback chain per selected NIC.
+ * `both` returns two chains so the client can open them together.
+ */
+export function sparkEndpointGroups(
+  host: string,
+  port: number,
+  useProxy = true,
+  route: SparkRoute = 'both',
+): string[][] {
+  const p = Number(port) > 0 ? Number(port) : SPARK_DEFAULT_PORT;
+  return sparkHostsForRoute(route, host).map((h) => urlsForSparkHost(h, p, useProxy));
+}
+
+export function sparkEndpointUrls(
+  host: string,
+  port: number,
+  useProxy = true,
+  route: SparkRoute = 'both',
+): string[] {
+  const urls: string[] = [];
+  for (const group of sparkEndpointGroups(host, port, useProxy, route)) {
+    for (const url of group) {
+      if (!urls.includes(url)) urls.push(url);
+    }
+  }
+  return urls;
+}
+
 export function resolveSparkBaseUrl(
   host: string,
   port: number,
   useProxy = true,
+  route: SparkRoute = 'both',
 ): string {
-  const h = String(host || SPARK_DEFAULT_HOST)
-    .trim()
-    .replace(/^https?:\/\//, '')
-    .split('/')[0]
-    .split(':')[0]
-  const p = Number(port) > 0 ? Number(port) : SPARK_DEFAULT_PORT
-
-  if (typeof window !== 'undefined' && useProxy) {
-    const pageHost = window.location.hostname || ''
-    const protocol = window.location.protocol || ''
-    const pagePort = window.location.port || ''
-    const envHost = import.meta.env.VITE_SPARK_HOST || SPARK_DEFAULT_HOST
-    const envPort =
-      Number(import.meta.env.VITE_SPARK_PORT || SPARK_DEFAULT_PORT) || SPARK_DEFAULT_PORT
-    // Vite same-origin proxy when settings match vite.config.ts target
-    if (
-      protocol === 'http:' &&
-      (pageHost === 'localhost' || pageHost === '127.0.0.1') &&
-      (pagePort === '5173' || pagePort === '5174' || pagePort === '') &&
-      h === envHost &&
-      p === envPort
-    ) {
-      return `${window.location.origin}/spark-vllm/v1`
-    }
-    // Expo-style cloud-key-proxy (supports arbitrary host/port in the path)
-    if (protocol === 'http:' && (pageHost === 'localhost' || pageHost === '127.0.0.1')) {
-      return `http://127.0.0.1:17332/spark/${h}/${p}/v1`
-    }
-    if (
-      protocol === 'http:' &&
-      (pageHost.startsWith('192.168.') ||
-        pageHost.startsWith('10.') ||
-        pageHost.endsWith('.local'))
-    ) {
-      return `http://${pageHost}:17332/spark/${h}/${p}/v1`
-    }
-  }
-
-  return `http://${h}:${p}/v1`
+  return sparkEndpointUrls(host, port, useProxy, route)[0];
 }
 
 export function defaultSettings(): StoredSettings {
-  const sparkHost =
-    import.meta.env.VITE_SPARK_HOST || SPARK_DEFAULT_HOST
-  const sparkPort = Number(import.meta.env.VITE_SPARK_PORT || SPARK_DEFAULT_PORT) || SPARK_DEFAULT_PORT
-  const provider =
-    (import.meta.env.VITE_DEFAULT_PROVIDER as ProviderId) || 'spark'
   return {
-    provider,
-    featherlessBaseUrl:
-      import.meta.env.VITE_FEATHERLESS_BASE_URL || FEATHERLESS_PROXY_BASE,
-    featherlessApiKey: import.meta.env.VITE_FEATHERLESS_API_KEY || '',
-    abliterationBaseUrl:
-      import.meta.env.VITE_ABLITERATION_BASE_URL || 'https://api.abliteration.ai/v1',
-    abliterationApiKey: import.meta.env.VITE_ABLITERATION_API_KEY || '',
-    sparkHost,
-    sparkPort,
-    sparkUseProxy: import.meta.env.VITE_SPARK_USE_PROXY !== 'false',
-    sparkApiKey: import.meta.env.VITE_SPARK_API_KEY || '',
-    model:
-      provider === 'spark'
-        ? SPARK_PREFER[0]
-        : provider === 'abliteration'
-          ? ABLITERATION_PREFER[0]
-          : FEATHERLESS_PREFER[0],
+    provider: 'spark',
+    featherlessBaseUrl: FEATHERLESS_PROXY_BASE,
+    featherlessApiKey: '',
+    abliterationBaseUrl: 'https://api.abliteration.ai/v1',
+    abliterationApiKey: '',
+    sparkHost: SPARK_DEFAULT_HOST,
+    sparkPort: SPARK_DEFAULT_PORT,
+    sparkUseProxy: true,
+    sparkRoute: 'both',
+    sparkApiKey: '',
+    model: SPARK_PREFER[0],
     agentMode: false,
     deepBuild: false,
     clusterRag: true,
     temperature: 0.7,
     maxTokens: 4096,
     agentMaxRounds: 8,
-    rainMode: 'auto',
-    rainMoodManual: 'focus',
-    laserMode: 'auto',
-    laserLevelManual: 3,
     workspaceDir: '/Users/adminuser/AIUI',
-  }
+  };
 }
 
 export function loadSettings(): StoredSettings {
-  const base = defaultSettings()
+  const base = defaultSettings();
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return base
-    const parsed = { ...base, ...JSON.parse(raw) } as StoredSettings
-    if (typeof parsed.sparkPort === 'string') {
-      parsed.sparkPort = Number(parsed.sparkPort) || SPARK_DEFAULT_PORT
-    }
-    // Prefer local cloud-key-proxy over direct Featherless (CF 1010 on some clients)
-    if (
-      !parsed.featherlessBaseUrl ||
-      parsed.featherlessBaseUrl === FEATHERLESS_DIRECT_BASE ||
-      parsed.featherlessBaseUrl === 'https://api.featherless.ai' ||
-      parsed.featherlessBaseUrl.replace(/\/$/, '') === FEATHERLESS_DIRECT_BASE
-    ) {
-      parsed.featherlessBaseUrl = FEATHERLESS_PROXY_BASE
-    }
-    // Auto-migrate away from gated Meta/Gemma defaults that 403 without HF OAuth
-    if (
-      parsed.provider === 'featherless' &&
-      FEATHERLESS_GATED_PREFER.includes(parsed.model)
-    ) {
-      parsed.model = FEATHERLESS_PREFER[0]
-    }
-    return parsed
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return base;
+    const parsed = JSON.parse(raw) as Partial<StoredSettings>;
+    return {
+      ...base,
+      ...parsed,
+      sparkRoute: normalizeSparkRoute(parsed.sparkRoute),
+    };
   } catch {
-    return base
+    return base;
   }
 }
 
-export function saveSettings(s: StoredSettings) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(s))
+export function saveSettings(s: StoredSettings): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+  } catch {}
 }
 
 export function activeProvider(s: StoredSettings): ProviderConfig {
   if (s.provider === 'spark') {
+    const route = normalizeSparkRoute(s.sparkRoute);
+    const groups = sparkEndpointGroups(s.sparkHost, s.sparkPort, s.sparkUseProxy, route);
     return {
       id: 'spark',
-      name: 'Spark Qwen3.6-35B-A3B Abliterated NVFP4+MTP',
-      baseUrl: resolveSparkBaseUrl(s.sparkHost, s.sparkPort, s.sparkUseProxy).replace(/\/$/, ''),
+      name: 'Spark DGX vLLM',
+      baseUrl: groups[0][0],
+      fallbackBaseUrls: groups[0].slice(1),
+      endpointGroups: groups,
       apiKey: s.sparkApiKey || '',
       requiresApiKey: false,
-    }
+    };
   }
   if (s.provider === 'abliteration') {
     return {
       id: 'abliteration',
-      name: 'Abliteration',
-      baseUrl: s.abliterationBaseUrl.replace(/\/$/, ''),
+      name: 'Abliteration AI',
+      baseUrl: s.abliterationBaseUrl,
       apiKey: s.abliterationApiKey,
       requiresApiKey: true,
-    }
+    };
   }
-  const featherBase = s.featherlessBaseUrl.replace(/\/$/, '')
-  const viaProxy = usesCloudKeyProxy(featherBase)
   return {
     id: 'featherless',
-    name: viaProxy ? 'Featherless (via proxy)' : 'Featherless',
-    baseUrl: featherBase,
+    name: 'Featherless AI',
+    baseUrl: s.featherlessBaseUrl,
     apiKey: s.featherlessApiKey,
-    // Proxy injects FEATHERLESS_API_KEY; browser key optional
-    requiresApiKey: !viaProxy,
-  }
+    requiresApiKey: true,
+  };
 }
 
-
-/** Composer assist intensity — replaces separate Agent / Deep / Auto toggles. */
-export type AssistMode = 'chat' | 'agent' | 'deep'
+export type AssistMode = 'chat' | 'agent' | 'deep';
 
 export function getAssistMode(s: Pick<StoredSettings, 'agentMode' | 'deepBuild'>): AssistMode {
-  if (s.agentMode && s.deepBuild) return 'deep'
-  if (s.agentMode) return 'agent'
-  return 'chat'
+  if (s.agentMode && s.deepBuild) return 'deep';
+  if (s.agentMode) return 'agent';
+  return 'chat';
 }
 
-/** Apply a single assist mode. RAG stays independent (default on). Auto-bash follows agent/deep. */
-export function applyAssistMode(
-  s: StoredSettings,
-  mode: AssistMode,
-): StoredSettings {
-  if (mode === 'chat') {
-    return { ...s, agentMode: false, deepBuild: false }
-  }
-  if (mode === 'agent') {
-    return { ...s, agentMode: true, deepBuild: false }
-  }
-  return { ...s, agentMode: true, deepBuild: true }
+export function applyAssistMode(s: StoredSettings, mode: AssistMode): StoredSettings {
+  if (mode === 'chat') return { ...s, agentMode: false, deepBuild: false };
+  if (mode === 'agent') return { ...s, agentMode: true, deepBuild: false };
+  return { ...s, agentMode: true, deepBuild: true };
 }
 
-/**
- * Native OpenAI tool_calls / tool_choice.
- * Spark vLLM needs --enable-auto-tool-choice; Featherless/Abliteration are
- * OpenAI-compatible — try native tools, streamChat falls back if rejected.
- */
 export function providerSupportsNativeTools(provider: ProviderId): boolean {
-  return provider === 'spark' || provider === 'featherless' || provider === 'abliteration'
+  return provider === 'spark' || provider === 'featherless' || provider === 'abliteration';
 }
 
 export function preferFor(provider: ProviderId): string[] {
-  if (provider === 'abliteration') return ABLITERATION_PREFER
-  if (provider === 'spark') return SPARK_PREFER
-  return FEATHERLESS_PREFER
+  if (provider === 'abliteration') return ABLITERATION_PREFER;
+  if (provider === 'spark') return SPARK_PREFER;
+  return FEATHERLESS_PREFER;
 }
 
 export function mergeCatalog(provider: ProviderId, ids: string[]): string[] {
-  const prefer = preferFor(provider)
-  const seen = new Set<string>()
-  const out: string[] = []
+  const prefer = preferFor(provider);
+  const seen = new Set<string>();
+  const out: string[] = [];
   for (const id of [...prefer, ...ids]) {
-    if (!id || seen.has(id)) continue
-    seen.add(id)
-    out.push(id)
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
   }
-  return out.slice(0, 250)
+  return out.slice(0, 250);
 }

@@ -1,0 +1,161 @@
+{
+  "timestamp": "2026-09-22T20:46:15.647987Z",
+  "clusterTopology": {
+    "macHost": "192.168.4.50",
+    "sparkHost": "192.168.4.103"
+  },
+  "services": {
+    "vllm_health": {
+      "name": "vLLM Inference (:8000)",
+      "primaryHost": "dgx_spark",
+      "ok": true,
+      "url": "http://192.168.4.103:8000/health",
+      "status": 200,
+      "latency_ms": 8,
+      "data": ""
+    },
+    "vllm_models": {
+      "name": "vLLM Models List (:8000)",
+      "primaryHost": "dgx_spark",
+      "ok": true,
+      "url": "http://192.168.4.103:8000/v1/models",
+      "status": 200,
+      "latency_ms": 10,
+      "data": {
+        "object": "list",
+        "data": [
+          {
+            "id": "qwen-abliterated",
+            "object": "model",
+            "created": 1790109975,
+            "owned_by": "vllm",
+            "root": "/models/Qwen3.6-35B-A3B-abliterated-NVFP4-MTP",
+            "parent": null,
+            "max_model_len": 32768,
+            "permission": [
+              {
+                "id": "modelperm-ae5039bc5a96a383",
+                "object": "model_permission",
+                "created": 1790109975,
+                "allow_create_engine": false,
+                "allow_sampling": true,
+                "allow_logprobs": true,
+                "allow_search_indices": false,
+                "allow_view": true,
+                "allow_fine_tuning": false,
+                "organization": "*",
+                "group": null,
+                "is_blocking": false
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "sandbox_runner": {
+      "name": "Sandbox Runner (:17330)",
+      "primaryHost": "dgx_spark",
+      "ok": true,
+      "url": "http://127.0.0.1:17330/health",
+      "status": 200,
+      "latency_ms": 1,
+      "data": {
+        "ok": true,
+        "service": "spark-sandbox-runner",
+        "port": 17330,
+        "uptime": 765.10215975,
+        "features": [
+          "serve",
+          "preview",
+          "browser-test",
+          "sse",
+          "pty",
+          "jobs",
+          "containers"
+        ]
+      }
+    },
+    "sandbox_health": {
+      "name": "Sandbox Env Health (:17330)",
+      "primaryHost": "dgx_spark",
+      "ok": true,
+      "url": "http://127.0.0.1:17330/api/sandbox/health",
+      "status": 200,
+      "latency_ms": 1,
+      "data": {
+        "ok": true,
+        "service": "spark-sandbox-runner",
+        "port": 17330,
+        "uptime": 765.103460334,
+        "features": [
+          "serve",
+          "preview",
+          "browser-test",
+          "sse",
+          "pty",
+          "jobs",
+          "containers"
+        ]
+      }
+    },
+    "mempalace_bridge": {
+      "name": "MemPalace Context Bridge (:17333)",
+      "primaryHost": "mac_host",
+      "ok": false,
+      "url": "http://127.0.0.1:17333/health",
+      "status": 0,
+      "latency_ms": 0,
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    "mempalace_status": {
+      "name": "MemPalace Vector Memory (:17333)",
+      "primaryHost": "mac_host",
+      "ok": false,
+      "url": "http://127.0.0.1:17333/mcp/status",
+      "status": 0,
+      "latency_ms": 0,
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    "agent_monitor": {
+      "name": "Agent Telemetry Monitor (:17335)",
+      "primaryHost": "shared",
+      "ok": false,
+      "url": "http://127.0.0.1:17335/health",
+      "status": 0,
+      "latency_ms": 0,
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    "self_awareness_health": {
+      "name": "Self-Awareness Daemon (:17336)",
+      "primaryHost": "mac_host",
+      "ok": false,
+      "url": "http://127.0.0.1:17336/health",
+      "status": 0,
+      "latency_ms": 0,
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    "self_awareness_suggestions": {
+      "name": "Meta-Awareness Suggestions (:17336)",
+      "primaryHost": "mac_host",
+      "ok": false,
+      "url": "http://127.0.0.1:17336/api/suggestions",
+      "status": 0,
+      "latency_ms": 0,
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    "chat_optimizer": {
+      "name": "Chat Response Optimizer (:17337)",
+      "primaryHost": "shared",
+      "ok": false,
+      "url": "http://127.0.0.1:17337/api/policy",
+      "status": 0,
+      "latency_ms": 0,
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    }
+  },
+  "summary": {
+    "total": 10,
+    "online": 4,
+    "offline": 6
+  }
+}

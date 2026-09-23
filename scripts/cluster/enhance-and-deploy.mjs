@@ -9,8 +9,8 @@ const SCRIPTS_DIR = '/Users/adminuser/AIUI/scripts';
 console.log('=== STARTING FEATHERLESS SELF-HEALING ENHANCEMENT & DEPLOYMENT ===');
 
 // 1. Copy error_fixer.py and error_checker.py to AIUIRO-216
-const fixerCode = fs.readFileSync(path.join(SCRIPTS_DIR, 'error_fixer_template.py'), 'utf-8');
-const checkerCode = fs.readFileSync(path.join(SCRIPTS_DIR, 'error_checker_template.py'), 'utf-8');
+const fixerCode = fs.readFileSync(path.join(SCRIPTS_DIR, 'checks/error_fixer_template.py'), 'utf-8');
+const checkerCode = fs.readFileSync(path.join(SCRIPTS_DIR, 'checks/error_checker_template.py'), 'utf-8');
 
 fs.writeFileSync(path.join(AIUIRO_DIR, 'error_fixer.py'), fixerCode, { mode: 0o755 });
 fs.writeFileSync(path.join(AIUIRO_DIR, 'error_checker.py'), checkerCode, { mode: 0o755 });
@@ -22,7 +22,7 @@ const cronJobSh = `#!/usr/bin/env bash
 set -e
 
 DIR="$(cd -P "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
-export FEATHERLESS_API_KEY="\${FEATHERLESS_API_KEY:-rc_a939625b5ebea3e527e07ee81d1d3ac10a77be72203eed6e53c3a81f4174a86a}"
+: "\${FEATHERLESS_API_KEY:?FEATHERLESS_API_KEY must be set}"
 
 echo "=== [$(date '+%Y-%m-%d %H:%M:%S')] Featherless AI Self-Healing Monitor ==="
 python3 "\${DIR}/error_checker.py" --heal --dir "\${DIR}"

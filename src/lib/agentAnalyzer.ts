@@ -8,7 +8,7 @@
  * 5. Provide circuit-breaker protection against runaway loops.
  */
 
-import { isVerificationStageCommand } from './goalVerification'
+import { isVerificationStageCommand, isMultiStepPrompt, detectFactualGroundingViolations } from './goalVerification.ts'
 
 export interface ActionRecord {
   round: number
@@ -95,6 +95,11 @@ export function getAntiLoopPromptSuggestions(
     ],
     stagnant_error: [
       {
+        id: 'external-tool',
+        label: 'Use external tool',
+        prompt: `The shell command keeps failing. Switch execution method: use a specialized external tool (e.g. csv_stats_analyzer, sqlite_query, bin_lookup, git_blame_inspector) or call research_and_acquire_tool to get a purpose-built script instead of fragile shell loops${goalBit}.`,
+      },
+      {
         id: 'new-repro',
         label: 'Change the repro',
         prompt: `The same command keeps failing. Change one variable (cwd, flags, file, or env), or inspect the error site with read_file before any retry${goalBit}.`,
@@ -103,6 +108,11 @@ export function getAntiLoopPromptSuggestions(
       common[3],
     ],
     identical_command: [
+      {
+        id: 'external-tool-alt',
+        label: 'Try external tool',
+        prompt: `Do not run the same shell command again. Consider an external tool (csv_stats_analyzer, sqlite_query, bin_lookup, git_blame_inspector) or acquire one with research_and_acquire_tool${goalBit}.`,
+      },
       {
         id: 'no-rerun',
         label: 'No identical rerun',
@@ -369,7 +379,30 @@ export class AgentAnalyzer {
       current.command &&
       isVerificationStageCommand(current.command)
     ) {
-      this.currentStage = 'completion'
+      this.currentStage = !isMultiStepPrompt(this.userGoal) ? 'completion' : 'verification'
+    }
+
+    // 0. Factual Grounding & Anti-Hallucination Verification
+    if (current.responseText) {
+      const grounding = detectFactualGroundingViolations(
+        current.responseText,
+        current.command ? [current.command] : [],
+      )
+      if (grounding.hasViolation) {
+        this.currentStage = 'stalled'
+        return {
+          isLooping: true,
+          loopType: 'stalled_progress',
+          repeatCount: 1,
+          repeatedAction: grounding.warning,
+          nudgePrompt: `Anti-hallucination guard active: ${grounding.directive}`,
+          suggestedAction: 'pivot_strategy',
+          progressMade: false,
+          progressSummary: `Factual grounding violation: ${grounding.warning}`,
+          stage: 'stalled',
+          directionSummary: 'Execution stalled due to unverified claims contradicting real tool outputs.',
+        }
+      }
     }
 
     // 1. Evaluate Forward Progress Indicators
@@ -518,9 +551,10 @@ ${(current.stderrExcerpt || '').slice(0, 250)}
 \`\`\`
 CRITICAL: Do NOT run this same command again without changing the underlying code or environment.
 You MUST:
-1. Formulate a new hypothesis.
-2. Apply the necessary code/config fix using write_file or bash.
-3. Verify the file modification before re-running tests.`,
+1. Formulate a new hypothesis or change execution method.
+2. If this task involves tables/CSVs, databases, BIN/cards, or complex parsing, consider using specialized external tools (e.g. csv_stats_analyzer, sqlite_query, bin_lookup) or research_and_acquire_tool instead of repeating fragile shell pipes.
+3. Apply the necessary code/config fix using write_file or bash.
+4. Verify the file modification before re-running tests.`,
           }
         }
       }

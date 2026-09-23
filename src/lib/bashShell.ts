@@ -3,6 +3,9 @@
  * Connects web-api-app to the active sandbox-runner daemon on the Mac.
  */
 
+import { resolveVerificationGateCommand } from './goalVerification.ts';
+import { fetchWithRetry } from './resilientFetch';
+
 export type ExecutionTarget = 'local_mac' | 'dgx_spark' | 'container';
 
 export interface LinuxContainerInfo {
@@ -52,6 +55,7 @@ export interface BashExecResult {
   exitCode: number;
   durationMs: number;
   target: ExecutionTarget;
+  cwd?: string;
   timestamp: string;
   error?: string;
   inContainer?: boolean;
@@ -71,21 +75,138 @@ const STORAGE_TARGET_KEY = 'abliterated_bash_target';
 const STORAGE_AUTO_EXEC_KEY = 'abliterated_auto_bash_enabled';
 const STORAGE_SANDBOX_URL_KEY = 'abliterated_sandbox_url';
 const STORAGE_WORKSPACE_DIR_KEY = 'abliterated_workspace_dir';
+const STORAGE_ACTIVE_WORKSPACE_ENVID_KEY = 'abliterated_active_workspace_envid';
+
+let inMemoryActiveWorkspaceEnvId = 'workspace1';
+
+export function getActiveWorkspaceEnvId(): string {
+  try {
+    const val = localStorage.getItem(STORAGE_ACTIVE_WORKSPACE_ENVID_KEY);
+    if (val && val.trim()) return val.trim();
+  } catch {
+    /* ignore */
+  }
+  return inMemoryActiveWorkspaceEnvId || 'workspace1';
+}
+
+export function setActiveWorkspaceEnvId(envId: string) {
+  const clean = String(envId || '').trim().replace(/[^a-zA-Z0-9_\-]/g, '_');
+  if (!clean) return;
+  inMemoryActiveWorkspaceEnvId = clean;
+  try {
+    localStorage.setItem(STORAGE_ACTIVE_WORKSPACE_ENVID_KEY, clean);
+  } catch {
+    /* ignore */
+  }
+}
+
+export interface WorkspaceInfo {
+  envId: string;
+  path: string;
+  chatId?: string;
+  created?: boolean;
+}
+
+/**
+ * Allocate or resolve a dedicated sandbox workspace for a chat session.
+ * Always binds chats to /tmp/spark-sandboxes/workspaceN.
+ */
+export async function allocateChatWorkspace(
+  chatId: string,
+  baseUrl = getSandboxBaseUrl(),
+): Promise<WorkspaceInfo> {
+  const cleanChatId = String(chatId || '').trim();
+  if (!cleanChatId) {
+    return {
+      envId: 'workspace1',
+      path: '/tmp/spark-sandboxes/workspace1',
+      chatId: 'default',
+      created: false,
+    };
+  }
+
+  try {
+    const res = await fetch(`${baseUrl}/api/sandbox/workspace`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chatId: cleanChatId }),
+      signal: AbortSignal.timeout(4000),
+    });
+    if (res.ok) {
+      const json = (await res.json()) as { ok: boolean; envId: string; path: string; created?: boolean };
+      if (json.ok && json.envId) {
+        setActiveWorkspaceEnvId(json.envId);
+        return {
+          envId: json.envId,
+          path: json.path || `/tmp/spark-sandboxes/${json.envId}`,
+          chatId: cleanChatId,
+          created: json.created,
+        };
+      }
+    }
+  } catch {
+    // fallback if runner workspace endpoint not yet reachable
+  }
+
+  // Deterministic local workspace index based on chatId
+  let hash = 0;
+  for (let i = 0; i < cleanChatId.length; i++) {
+    hash = (hash * 31 + cleanChatId.charCodeAt(i)) >>> 0;
+  }
+  const fallbackEnvId = `workspace${(hash % 30) + 1}`;
+  setActiveWorkspaceEnvId(fallbackEnvId);
+  return {
+    envId: fallbackEnvId,
+    path: `/tmp/spark-sandboxes/${fallbackEnvId}`,
+    chatId: cleanChatId,
+    created: false,
+  };
+}
+
+/**
+ * Resolve an existing sandbox workspace for a chat session or envId.
+ */
+export async function resolveChatWorkspace(
+  chatIdOrEnvId: string,
+  baseUrl = getSandboxBaseUrl(),
+): Promise<WorkspaceInfo | null> {
+  const clean = String(chatIdOrEnvId || '').trim();
+  if (!clean) return null;
+  try {
+    const res = await fetch(`${baseUrl}/api/sandbox/workspace?chatId=${encodeURIComponent(clean)}`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (res.ok) {
+      const json = (await res.json()) as { ok: boolean; envId: string; path: string };
+      if (json.ok && json.envId) {
+        return {
+          envId: json.envId,
+          path: json.path || `/tmp/spark-sandboxes/${json.envId}`,
+          chatId: clean,
+        };
+      }
+    }
+  } catch {
+    // fallback
+  }
+  return null;
+}
 
 export function getStoredWorkspaceDir(_target: ExecutionTarget = getStoredTarget()): string {
   try {
     const val = localStorage.getItem(STORAGE_WORKSPACE_DIR_KEY);
-    if (val && val.trim() && !val.includes('/Users/adminuser')) return val.trim();
+    if (val && val.trim() && !val.includes('/Users/adminuser') && !val.includes('/Users/')) return val.trim();
   } catch {
     /* ignore */
   }
-  return '/tmp/spark-sandboxes';
+  const envId = getActiveWorkspaceEnvId();
+  return `/tmp/spark-sandboxes/${envId}`;
 }
 
 export function setStoredWorkspaceDir(dir: string) {
   try {
     const trimmed = (dir || '').trim();
-    if (trimmed && !trimmed.includes('/Users/adminuser')) {
+    if (trimmed && !trimmed.includes('/Users/adminuser') && !trimmed.includes('/Users/')) {
       localStorage.setItem(STORAGE_WORKSPACE_DIR_KEY, trimmed);
     } else {
       localStorage.removeItem(STORAGE_WORKSPACE_DIR_KEY);
@@ -158,7 +279,7 @@ export async function checkSandboxHealth(baseUrl = getSandboxBaseUrl()): Promise
 
   const t0 = performance.now();
   try {
-    const res = await fetch(`${baseUrl}/health`, {
+    const res = await fetchWithRetry(`${baseUrl}/health`, {
       method: 'GET',
       signal: AbortSignal.timeout(2000),
     });
@@ -198,7 +319,7 @@ export async function checkSandboxHealth(baseUrl = getSandboxBaseUrl()): Promise
 export async function executeBashCommand(
   command: string,
   target: ExecutionTarget = getStoredTarget(),
-  envId = 'web_session',
+  envId?: string,
   baseUrl = getSandboxBaseUrl(),
   cwd?: string,
 ): Promise<BashExecResult> {
@@ -220,17 +341,30 @@ export async function executeBashCommand(
     };
   }
 
+  // Preflight sanitization: Resolve verification gates, strip assertion suffixes, and add package.json guard
+  const sanitizedCmd = resolveVerificationGateCommand(trimmed);
+
   // Enforce zero host execution: All workspace execution runs strictly on DGX Spark sandbox
   const safeTarget: ExecutionTarget = target === 'local_mac' ? 'dgx_spark' : target;
-  const workingDir = cwd || getStoredWorkspaceDir(safeTarget);
+  const effectiveEnvId = envId && envId !== 'web_session' ? envId : getActiveWorkspaceEnvId();
+  let workingDir = cwd || getStoredWorkspaceDir(safeTarget);
+  // Guarantee sandbox path boundary: remap any Mac host path or escape attempts into /tmp/spark-sandboxes/workspaceN
+  if (
+    workingDir.includes('/Users/adminuser') ||
+    workingDir.includes('/Users/') ||
+    workingDir.startsWith('/home/') ||
+    workingDir.includes('..')
+  ) {
+    workingDir = `/tmp/spark-sandboxes/${effectiveEnvId}`;
+  }
 
   try {
-    const res = await fetch(`${baseUrl}/api/sandbox/exec`, {
+    const res = await fetchWithRetry(`${baseUrl}/api/sandbox/exec`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        envId,
-        cmd: trimmed,
+        envId: effectiveEnvId,
+        cmd: sanitizedCmd,
         target: safeTarget,
         cwd: workingDir,
       }),
@@ -270,6 +404,7 @@ export async function executeBashCommand(
       exitCode: json.exitCode ?? (json.ok ? 0 : 1),
       durationMs,
       target,
+      cwd: workingDir,
       timestamp,
       error: json.error,
     };
@@ -284,6 +419,7 @@ export async function executeBashCommand(
       exitCode: -1,
       durationMs,
       target,
+      cwd: workingDir,
       timestamp,
       error: msg,
     };
@@ -360,11 +496,12 @@ export async function destroyLinuxContainer(
   target: 'dgx_spark' | 'local_mac' = 'dgx_spark',
   baseUrl = getSandboxBaseUrl()
 ): Promise<{ ok: boolean; containerName?: string; error?: string }> {
+  const safeTarget = target === 'local_mac' ? 'dgx_spark' : target;
   try {
     const res = await fetch(`${baseUrl}/api/sandbox/container/destroy`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ envId, target }),
+      body: JSON.stringify({ envId, target: safeTarget }),
       signal: AbortSignal.timeout(15000),
     });
     return (await res.json()) as { ok: boolean; containerName?: string; error?: string };

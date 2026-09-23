@@ -20,6 +20,8 @@ export interface ChatSession {
   provider: string
   messages: StoredUiMessage[]
   pinned?: boolean
+  workspaceEnvId?: string
+  workspacePath?: string
 }
 
 const STORAGE_KEY = 'ablit_chat_sessions_v2'
@@ -55,6 +57,45 @@ export function loadAllSessions(): ChatSession[] {
   }
 }
 
+/**
+ * Compacts conversation history to prevent browser LocalStorage QuotaExceededError.
+ * 1. Truncates oversized stdout/stderr/tool outputs in older non-active sessions.
+ * 2. Limits history to the 35 most recent sessions (pinned sessions are always preserved).
+ */
+export function compactSessionsForStorage(
+  sessions: ChatSession[],
+  activeId?: string,
+  maxSessions = 35,
+): ChatSession[] {
+  // Sort by pinned first, then newest
+  const sorted = [...sessions].sort((a, b) => {
+    if (a.pinned && !b.pinned) return -1
+    if (!a.pinned && b.pinned) return 1
+    return b.updatedAt - a.updatedAt
+  })
+
+  // Retain active, all pinned, and up to maxSessions
+  const kept = sorted.filter((s, idx) => s.pinned || s.id === activeId || idx < maxSessions)
+
+  // In older non-active sessions, truncate large message contents (tool outputs, huge diffs)
+  return kept.map((s) => {
+    if (s.id === activeId || s.pinned) return s
+    const compactedMsgs = s.messages.map((m) => {
+      if (m.role === 'tool' || (m.role === 'assistant' && m.content.length > 2000)) {
+        return {
+          ...m,
+          content: m.content.slice(0, 1000) + '\n… [compacted for storage]',
+        }
+      }
+      return m
+    })
+    return {
+      ...s,
+      messages: compactedMsgs,
+    }
+  })
+}
+
 export function saveSession(session: ChatSession): void {
   try {
     const sessions = loadAllSessions()
@@ -64,7 +105,20 @@ export function saveSession(session: ChatSession): void {
     } else {
       sessions.unshift({ ...session, updatedAt: Date.now() })
     }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions))
+
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions))
+    } catch (quotaErr) {
+      console.warn('[ChatHistory] LocalStorage quota pressure detected, running compaction...', quotaErr)
+      const compacted = compactSessionsForStorage(sessions, session.id)
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(compacted))
+      } catch (secondErr) {
+        // Aggressive fallback: keep only current session and pinned
+        const emergency = compacted.filter((s) => s.id === session.id || s.pinned)
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(emergency))
+      }
+    }
   } catch (err) {
     console.error('[ChatHistory] Failed to save session:', err)
   }

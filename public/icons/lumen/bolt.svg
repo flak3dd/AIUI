@@ -1,0 +1,21 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="43.4" height="48.8001" viewBox="0 0 43.4 48.8001" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Bolt icon" filter="url(#filter0_dd_0_15)">
+<path d="M22.9 14.9001L14.9 25.8001H20.9L20.3 33.9001L28.5 23.0001H22.5L22.9 14.9001Z" stroke="#A363FF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<defs>
+<filter id="filter0_dd_0_15" x="1.19209e-07" y="-3.57628e-07" width="43.4" height="48.8001" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset/>
+<feGaussianBlur stdDeviation="2.5"/>
+<feColorMatrix type="matrix" values="0 0 0 0 0.64 0 0 0 0 0.39 0 0 0 0 1 0 0 0 0.9 0"/>
+<feBlend mode="screen" in2="BackgroundImageFix" result="effect1_dropShadow_0_15"/>
+<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+<feOffset/>
+<feGaussianBlur stdDeviation="7"/>
+<feColorMatrix type="matrix" values="0 0 0 0 0.64 0 0 0 0 0.39 0 0 0 0 1 0 0 0 0.45 0"/>
+<feBlend mode="screen" in2="effect1_dropShadow_0_15" result="effect2_dropShadow_0_15"/>
+<feBlend mode="normal" in="SourceGraphic" in2="effect2_dropShadow_0_15" result="shape"/>
+</filter>
+</defs>
+</svg>

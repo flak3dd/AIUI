@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # AIUI stack debug monitor — polls health, tails errors, writes JSONL + human log.
 # Usage:
-#   ./scripts/monitor-debug.sh              # run until Ctrl-C
-#   ./scripts/monitor-debug.sh --once        # single status snapshot
-#   INTERVAL=2 ./scripts/monitor-debug.sh
+#   ./scripts/monitors/monitor-debug.sh              # run until Ctrl-C
+#   ./scripts/monitors/monitor-debug.sh --once        # single status snapshot
+#   INTERVAL=2 ./scripts/monitors/monitor-debug.sh
 set -uo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 ABLITERATED="${ABLITERATED_UI:-$HOME/abliterated_ui}"
 LOG_DIR="${LOG_DIR:-$ROOT/logs}"
 RUN_DIR="${RUN_DIR:-/tmp/abliterated-web-api-stack}"

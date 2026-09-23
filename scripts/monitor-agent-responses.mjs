@@ -25,7 +25,7 @@ const ROOT = path.resolve(__dirname, '..');
 const LOG_DIR = path.resolve(ROOT, 'logs');
 
 const PORT = Number(process.env.AGENT_MONITOR_PORT || 17335);
-const HOST = process.env.AGENT_MONITOR_HOST || '127.0.0.1';
+const HOST = process.env.AGENT_MONITOR_HOST || '0.0.0.0';
 
 const JSONL_LOG = path.join(LOG_DIR, 'agent-responses.jsonl');
 const HUMAN_LOG = path.join(LOG_DIR, 'agent-responses.log');
@@ -360,7 +360,7 @@ async function runProbe() {
   let apiKey = '';
   let provider = 'featherless';
   let baseUrl = 'https://api.featherless.ai/v1';
-  let model = 'Qwen/Qwen2.5-7B-Instruct';
+  let model = process.env.FEATHERLESS_MODEL || 'Qwen/Qwen2.5-Coder-32B-Instruct';
 
   const envPath = path.join(ROOT, '.env');
   if (fs.existsSync(envPath)) {
@@ -373,6 +373,7 @@ async function runProbe() {
         if (key === 'VITE_DEFAULT_PROVIDER') provider = val;
         if (key === 'VITE_FEATHERLESS_API_KEY') apiKey = val;
         if (key === 'VITE_FEATHERLESS_BASE_URL') baseUrl = val;
+        if (key === 'FEATHERLESS_MODEL' || key === 'VITE_FEATHERLESS_MODEL') model = val;
       }
     }
   }

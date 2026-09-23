@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import type { UiMessage } from '../types/ui'
+import type { UiMessage } from '../../types/ui'
 
 export interface AgentBashWorkingsSectionProps {
   messages: UiMessage[]

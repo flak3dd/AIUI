@@ -3,7 +3,10 @@
  * Transmits non-blocking telemetry and response traces to the local Agent Monitor (:17335).
  */
 
-const MONITOR_ENDPOINT = 'http://127.0.0.1:17335/api/agent/event'
+const MONITOR_BASE =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_AGENT_MONITOR_URL) ||
+  'http://127.0.0.1:17335'
+const MONITOR_ENDPOINT = `${MONITOR_BASE.replace(/\/$/, '')}/api/agent/event`
 
 export interface AgentDebugEvent {
   type: 'request' | 'response' | 'tool_call' | 'tool_result' | 'anti_loop' | 'error'

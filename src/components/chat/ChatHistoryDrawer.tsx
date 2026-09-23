@@ -3,7 +3,7 @@ import {
   type ChatSession,
   exportSessionAsMarkdown,
   downloadTextFile,
-} from '../lib/chatHistory'
+} from '../../lib/chatHistory'
 
 export interface ChatHistoryDrawerProps {
   isOpen: boolean

@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import type { ExecutionTarget } from '../lib/bashShell'
-import { isGatedModelId, modelLabel } from '../lib/providers'
-import { getAllScaffolds } from '../lib/scaffoldTemplates'
+import type { ExecutionTarget } from '../../lib/bashShell'
+import { isGatedModelId, modelLabel } from '../../lib/providers'
+import { getAllScaffolds } from '../../lib/scaffoldTemplates'
+import { DRACULA_THEMES, applyTheme } from '../../lib/theme'
 
 export interface CommandPaletteProps {
   isOpen: boolean
@@ -36,12 +37,24 @@ export interface CommandPaletteProps {
   clusterRag?: boolean
   activeWorkspaceDir?: string
   onChangeWorkspaceDir?: (dir: string) => void
+  onSendPrompt?: (prompt: string) => void
+  onOpenSshTool?: () => void
+  onOpenBase64Tool?: () => void
+  onOpenDynamicTools?: () => void
+  /** Work view: show/hide live PTY stream (not the desk TerminalDrawer). */
+  onToggleWorkTerminal?: () => void
+  workTerminalVisible?: boolean
+  /** Work view: spawn another isolated browser window (cap enforced upstream). */
+  onNewBrowserWindow?: () => void
+  browserWindowCount?: number
+  browserWindowCap?: number
+  browserCapHit?: boolean
 }
 
 interface PaletteAction {
   id: string
   title: string
-  category: 'Diagnostics' | 'Target' | 'Models' | 'Workspace' | 'Controls' | 'Memory' | 'Scaffolds'
+  category: 'Diagnostics' | 'Target' | 'Models' | 'Workspace' | 'Controls' | 'Memory' | 'Scaffolds' | 'Themes'
   icon: string
   hint?: string
   badge?: string
@@ -81,6 +94,16 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   clusterRag,
   activeWorkspaceDir,
   onChangeWorkspaceDir,
+  onSendPrompt,
+  onOpenSshTool,
+  onOpenBase64Tool,
+  onOpenDynamicTools,
+  onToggleWorkTerminal,
+  workTerminalVisible,
+  onNewBrowserWindow,
+  browserWindowCount,
+  browserWindowCap,
+  browserCapHit,
 }) => {
   const [query, setQuery] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
@@ -137,6 +160,31 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         icon: '📂',
         hint: 'Show all files with permissions & sizes',
         run: () => onRunCommand('ls -lah', currentTarget),
+      },
+      {
+        id: 'tool-ssh-runner',
+        title: 'Open Remote SSH Cluster Runner',
+        category: 'Diagnostics',
+        icon: '🔑',
+        hint: 'Direct remote SSH execution on DGX Spark (GB10)',
+        run: () => onOpenSshTool && onOpenSshTool(),
+      },
+      {
+        id: 'tool-base64-utility',
+        title: 'Open Base64 Toolkit (Encode / Decode)',
+        category: 'Controls',
+        icon: '🔤',
+        hint: 'Resilient UTF-8 Base64 string & file transform',
+        run: () => onOpenBase64Tool && onOpenBase64Tool(),
+      },
+      {
+        id: 'tool-dynamic-tools',
+        title: 'Open Dynamic Tools Architecture & JIT Extension',
+        category: 'Controls',
+        icon: '🧩',
+        badge: 'JIT Tools',
+        hint: 'Inspect, test, research, and hot-load autonomous agent tools',
+        run: () => onOpenDynamicTools && onOpenDynamicTools(),
       },
 
       // Target Switcher
@@ -264,6 +312,18 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         run: () => onNewChat && onNewChat(),
       },
       {
+        id: 'ctrl-optimise',
+        title: 'Run Complete Optimisation (optimise)',
+        category: 'Controls',
+        icon: '⚡',
+        hint: 'Complete system, GPU VRAM, MemPalace & policy optimization in chat',
+        run: () => {
+          onClose()
+          if (onSendPrompt) onSendPrompt('optimise')
+          else onRunCommand('npm run monitor:optimize', currentTarget)
+        },
+      },
+      {
         id: 'ctrl-agent-mode',
         title: `Toggle Autonomous Agent Mode (${agentMode ? 'Currently ON' : 'Currently OFF'})`,
         category: 'Controls',
@@ -292,12 +352,46 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       },
       {
         id: 'ctrl-term-toggle',
-        title: 'Toggle Pythonista Terminal Drawer',
+        title: 'Toggle Developer Panel & Terminal Drawer',
         category: 'Controls',
-        icon: '🐍',
-        hint: 'Show or hide the bottom interactive terminal',
+        icon: '💻',
+        badge: 'Ctrl+`',
+        hint: 'Show or hide the developer bash console, logs, target switcher & diagnostics',
         run: onToggleTerminal,
       },
+      ...(onToggleWorkTerminal
+        ? [
+            {
+              id: 'ctrl-work-terminal',
+              title: workTerminalVisible ? 'Hide Terminal (Work PTY)' : 'Terminal',
+              category: 'Controls' as const,
+              icon: '💻',
+              badge: 'Ctrl+`',
+              hint: 'Show or hide the Live Terminal (PTY stream) in the Work grid',
+              run: onToggleWorkTerminal,
+            },
+          ]
+        : []),
+      ...(onNewBrowserWindow
+        ? [
+            {
+              id: 'ctrl-new-browser',
+              title: browserCapHit
+                ? `New browser (cap ${browserWindowCap ?? 4})`
+                : 'New browser',
+              category: 'Controls' as const,
+              icon: '🌐',
+              badge:
+                typeof browserWindowCount === 'number' && typeof browserWindowCap === 'number'
+                  ? `${browserWindowCount}/${browserWindowCap}`
+                  : undefined,
+              hint: browserCapHit
+                ? `Browser cap reached (${browserWindowCap ?? 4}). Close a window before opening another.`
+                : 'Open another Playwright browser window for a separate agent run',
+              run: onNewBrowserWindow,
+            },
+          ]
+        : []),
       {
         id: 'ctrl-auto-ablit',
         title: `Toggle Auto-Ablit Execution (${autoAblit ? 'Currently ON' : 'Currently OFF'})`,
@@ -374,6 +468,22 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       })
     })
 
+    // Theme Switcher Actions
+    DRACULA_THEMES.forEach((th) => {
+      list.push({
+        id: `theme-${th.id}`,
+        title: `Theme: ${th.name}`,
+        category: 'Themes',
+        icon: '🎨',
+        badge: th.id === 'aiui' ? 'SIGNATURE' : th.isDark ? 'Dark' : 'Light',
+        hint: th.description,
+        run: () => {
+          applyTheme(th.id)
+          onClose()
+        },
+      })
+    })
+
     return list
   }, [
     models,
@@ -406,6 +516,17 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     clusterRag,
     onToggleRag,
     onExportZip,
+    onClose,
+    onSendPrompt,
+    onOpenSshTool,
+    onOpenBase64Tool,
+    onOpenDynamicTools,
+    onToggleWorkTerminal,
+    workTerminalVisible,
+    onNewBrowserWindow,
+    browserWindowCount,
+    browserWindowCap,
+    browserCapHit,
   ])
 
   const filtered = useMemo(() => {

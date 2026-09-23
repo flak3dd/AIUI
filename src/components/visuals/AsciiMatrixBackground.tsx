@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
-import { SATELLITE_ASTRONAUT_ASCII } from '../lib/asciiArtData'
-import { resolvePalette, type Mood, type RgbTriplet } from '../lib/rainMood'
+import { SATELLITE_ASTRONAUT_ASCII } from '../../lib/asciiArtData'
+import { resolvePalette, type Mood, type RgbTriplet } from '../../lib/rainMood'
 
 export interface AsciiMatrixBackgroundProps {
   opacity?: number

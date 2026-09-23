@@ -6,7 +6,7 @@
  * perspective laser-trace field.
  */
 
-import type { ProviderId } from './providers'
+import type { ProviderId } from './providers.ts'
 
 export type AbliterationLevel = 0 | 1 | 2 | 3 | 4
 
