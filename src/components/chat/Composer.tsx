@@ -8,11 +8,33 @@ import {
   type AssistMode,
   type StoredSettings,
   type ProviderId,
-} from '../lib/providers'
-import { ABLITERATION_LEVELS, ABLITERATION_LEVEL_ORDER } from '../lib/abliterationLevel'
-import type { ExecutionTarget } from '../lib/bashShell'
-import type { AntiLoopSuggestion } from '../lib/agentAnalyzer'
+  type SparkRoute,
+} from '../../lib/providers'
+import { ABLITERATION_LEVELS, ABLITERATION_LEVEL_ORDER } from '../../lib/abliterationLevel'
+import type { ExecutionTarget } from '../../lib/bashShell'
+import type { AntiLoopSuggestion } from '../../lib/agentAnalyzer'
+const ASSIST_CHOICES: { id: AssistMode; label: string; title: string }[] = [
+  { id: 'chat', label: 'Talk', title: 'Talk — think it through, nothing runs' },
+  { id: 'agent', label: 'Do it', title: 'Do it — look, change, and check' },
+  { id: 'deep', label: 'Build it', title: 'Build it — plan, implement, and verify' },
+]
 
+const ASSIST_LABEL: Record<AssistMode, string> = {
+  chat: 'Talk',
+  agent: 'Do it',
+  deep: 'Build it',
+}
+
+function agentStatusCopy(
+  status: { round: number; maxRounds: number; stage: string },
+  mode: AssistMode,
+): { verb: string; phrase: string; mono: boolean } {
+  const verb = mode === 'deep' ? 'Building' : mode === 'agent' ? 'Doing it' : 'Working'
+  if (status.stage === 'fixing') return { verb, phrase: 'fixing the last command', mono: false }
+  if (status.stage === 'anti_loop') return { verb, phrase: 'trying another way', mono: false }
+  if (status.stage === 'running_cmd') return { verb, phrase: 'running a command', mono: false }
+  return { verb, phrase: `round ${status.round} of ${status.maxRounds}`, mono: true }
+}
 
 export interface ComposerProps {
   error: string | null
@@ -29,7 +51,6 @@ export interface ComposerProps {
   settings: StoredSettings
   persist: (next: StoredSettings) => void
   showToast: (msg: string, opts?: { type?: 'info' | 'success' | 'warning' | 'error'; icon?: string; duration?: number }) => void
-  onOpenTerminal: () => void
   composerAdvanced: boolean
   setComposerAdvanced: React.Dispatch<React.SetStateAction<boolean>>
   modelQuery: string
@@ -55,8 +76,8 @@ export interface ComposerProps {
   input: string
   setInput: (v: string) => void
   send: () => void
-  handleInspectDuckDb: () => void
-  handleBranchSession: () => void
+  showAssistMode?: boolean
+  onSendPrompt?: (prompt: string) => void
 }
 
 export function Composer(props: ComposerProps) {
@@ -70,7 +91,6 @@ export function Composer(props: ComposerProps) {
     settings,
     persist,
     showToast,
-    onOpenTerminal,
     composerAdvanced,
     setComposerAdvanced,
     modelQuery,
@@ -85,6 +105,7 @@ export function Composer(props: ComposerProps) {
     setShowModelSearch,
     hideGated,
     setHideGated,
+    autoAblit,
     handleAutoAblitToggle,
     paramsAccordionOpen,
     setParamsAccordionOpen,
@@ -95,8 +116,8 @@ export function Composer(props: ComposerProps) {
     input,
     setInput,
     send,
-    handleInspectDuckDb,
-    handleBranchSession,
+    showAssistMode = true,
+    onSendPrompt,
   } = props
 
   return (
@@ -104,36 +125,21 @@ export function Composer(props: ComposerProps) {
       {error && <div className="error">{error}</div>}
       {modelsError && <div className="hint">{modelsError}</div>}
 
-      {agentStatus && (
-        <div className="agent-status-banner">
-          <div className="agent-status-left">
-            <span
-              className={`agent-pulse-dot ${
-                agentStatus.stage === 'anti_loop'
-                  ? 'anti_loop'
-                  : agentStatus.stage === 'fixing'
-                  ? 'fixing'
-                  : ''
-              }`}
-            />
-            <span className="agent-round-badge">Round {agentStatus.round}/{agentStatus.maxRounds}</span>
-            <span className="agent-status-text">
-              {agentStatus.stage === 'anti_loop'
-                ? `Adjusting approach: ${agentStatus.detail || 'trying a different path…'}`
-                : agentStatus.stage === 'fixing'
-                ? `${settings.deepBuild ? 'Deep fix' : 'Fixing'}${agentStatus.detail ? `: ${agentStatus.detail}` : '…'}`
-                : agentStatus.stage === 'running_cmd'
-                ? `Running: ${agentStatus.detail || 'command'}`
-                : settings.deepBuild
-                ? 'Thinking through the plan…'
-                : 'Thinking…'}
-            </span>
+      {agentStatus && (() => {
+        const copy = agentStatusCopy(agentStatus, getAssistMode(settings))
+        return (
+          <div className="agent-status-banner" role="status">
+            <p className="agent-status-line">
+              <span className="agent-status-verb">{copy.verb}</span>
+              <span className="agent-status-dot" aria-hidden="true">·</span>
+              <span className={copy.mono ? 'agent-status-round' : 'agent-status-detail'}>{copy.phrase}</span>
+            </p>
+            <button type="button" className="agent-stop-btn" onClick={stop}>
+              Stop
+            </button>
           </div>
-          <button type="button" className="btn-sm ghost" onClick={stop} title="Stop">
-            Stop
-          </button>
-        </div>
-      )}
+        )
+      })()}
 
       {antiLoopSuggestions && antiLoopSuggestions.length > 0 && (
         <div className="anti-loop-suggestions" role="group" aria-label="Anti-loop prompt suggestions">
@@ -161,6 +167,54 @@ export function Composer(props: ComposerProps) {
           {/* Composer */}
           <div className="composer-face composer-front">
             <div className={`composer-capsule ${composerAdvanced ? "is-advanced" : ""}`}>
+              {showAssistMode && (
+              <div className="assist-mode-seg" role="group" aria-label="Assist mode">
+                {ASSIST_CHOICES.map((m) => {
+                  const active = getAssistMode(settings) === m.id
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      className={`assist-mode-btn ${active ? 'active' : ''} ${m.id === 'deep' && active ? 'deep' : ''}`}
+                      disabled={busy}
+                      title={m.title}
+                      aria-pressed={active}
+                      onClick={() => {
+                        persist(applyAssistMode(settings, m.id))
+                        handleAutoAblitToggle(m.id !== 'chat')
+                        showToast(`Mode: ${ASSIST_LABEL[m.id]}`, { type: 'info' })
+                      }}
+                    >
+                      {m.label}
+                    </button>
+                  )
+                })}
+              </div>
+              )}
+
+              <textarea
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder="What should happen?"
+                disabled={busy && !settings.agentMode}
+                className="composer-textarea"
+                rows={3}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    void send()
+                  }
+                }}
+              />
+
+              <div className="composer-bottom-bar">
+                <details
+                  className="composer-setup"
+                  open={composerAdvanced}
+                  onToggle={(e) => setComposerAdvanced(e.currentTarget.open)}
+                >
+                  <summary>How this runs</summary>
+                  <div className="composer-setup-body">
               <div className="composer-top-bar">
                 <div className="composer-selectors">
                   <select
@@ -178,7 +232,7 @@ export function Composer(props: ComposerProps) {
                       const label = modelLabel(id)
                       return (
                         <option key={id} value={id}>
-                          {gated ? `🔒 ${label}` : `⚡ ${label}`}
+                          {gated ? `${label} (gated)` : label}
                         </option>
                       )
                     })}
@@ -194,9 +248,9 @@ export function Composer(props: ComposerProps) {
                     }}
                     title="Where to run commands"
                   >
-                    <option value="local_mac">💻 local_mac</option>
-                    <option value="dgx_spark">🚀 dgx_spark</option>
-                    <option value="container">📦 linux_pod</option>
+                    <option value="local_mac">This Mac</option>
+                    <option value="dgx_spark">Spark</option>
+                    <option value="container">Linux pod</option>
                   </select>
 
                   <select
@@ -215,14 +269,32 @@ export function Composer(props: ComposerProps) {
                     <option value="abliteration">Abliteration</option>
                   </select>
 
+                  {settings.provider === 'spark' && (
+                    <select
+                      className="composer-select-compact"
+                      value={settings.sparkRoute || 'both'}
+                      disabled={busy}
+                      title="Spark vLLM route. Both opens LAN and Tailscale and streams the first one that answers."
+                      onChange={(e) => {
+                        const sparkRoute = e.target.value as SparkRoute
+                        persist({ ...settings, sparkRoute })
+                        const label = sparkRoute === 'both' ? 'LAN + Tailscale' : sparkRoute === 'lan' ? 'LAN' : 'Tailscale'
+                        showToast(`vLLM → ${label}`, { type: 'info' })
+                      }}
+                    >
+                      <option value="both">LAN + Tailscale</option>
+                      <option value="lan">LAN</option>
+                      <option value="tailscale">Tailscale</option>
+                    </select>
+                  )}
+
                   <button
                     type="button"
                     className={`composer-tool-btn ${showModelSearch ? 'active' : ''}`}
                     onClick={() => setShowModelSearch(!showModelSearch)}
                     title="Search / filter models"
-                    style={{ padding: '3px 7px' }}
                   >
-                    🔍
+                    Search
                   </button>
 
                   {showModelSearch && (
@@ -251,33 +323,67 @@ export function Composer(props: ComposerProps) {
                 </div>
 
                 <div className="composer-toggles-strip">
-                  <div className="assist-mode-seg" role="group" aria-label="Assist mode">
-                    {([
-                      { id: 'chat' as const, label: 'Chat', title: 'Normal chat — no autonomous tool loop' },
-                      { id: 'agent' as const, label: 'Agent', title: 'Autonomous tools, bash, self-heal' },
-                      { id: 'deep' as const, label: 'Deep', title: 'Agent + thinking traces + larger budget' },
-                    ]).map((m) => {
-                      const active = getAssistMode(settings) === m.id
-                      return (
-                        <button
-                          key={m.id}
-                          type="button"
-                          className={`assist-mode-btn ${active ? 'active' : ''} ${m.id === 'deep' && active ? 'deep' : ''}`}
-                          disabled={busy}
-                          title={m.title}
-                          onClick={() => {
-                            const next = applyAssistMode(settings, m.id)
-                            persist(next)
-                            handleAutoAblitToggle(m.id !== 'chat')
-                            const labels = { chat: 'Chat', agent: 'Agent', deep: 'Deep' } as const
-                            showToast(`Mode: ${labels[m.id]}`, { type: 'info' })
-                          }}
-                        >
-                          {m.label}
-                        </button>
-                      )
-                    })}
-                  </div>
+                  <button
+                    type="button"
+                    className="composer-toggle-pill composer-optimise-pill"
+                    title="Run complete system, memory, policy & GPU optimization in chat (shortcut: 'optimise')"
+                    disabled={busy}
+                    onClick={() => {
+                      if (onSendPrompt) {
+                        onSendPrompt('optimise')
+                      } else {
+                        setInput('optimise')
+                        setTimeout(() => void send(), 20)
+                      }
+                    }}
+                  >
+                    <span>Optimise</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    className={`composer-toggle-pill optimize ${settings.optimizeChatResponses !== false ? 'active' : ''}`}
+                    title="Continuously optimize chat responses (monitor + MemPalace)"
+                    disabled={busy}
+                    onClick={() => {
+                      const next = !(settings.optimizeChatResponses !== false)
+                      persist({ ...settings, optimizeChatResponses: next })
+                      showToast(next ? 'Response optimizer ON' : 'Response optimizer OFF', { type: 'info' })
+                    }}
+                  >
+                    Auto-optimize
+                  </button>
+
+                  <label className="setup-check" title="Auto-run shell steps the agent writes">
+                    <input
+                      type="checkbox"
+                      checked={autoAblit}
+                      disabled={busy}
+                      onChange={(e) => {
+                        handleAutoAblitToggle(e.target.checked)
+                        showToast(e.target.checked ? 'Abliteration on' : 'Abliteration off', { type: 'info' })
+                      }}
+                    />
+                    Abliteration
+                  </label>
+
+                  <label className="setup-check" title="Enable Memory Palace episodic auto-recall">
+                    <input
+                      type="checkbox"
+                      checked={autoRecall}
+                      onChange={(e) => handleAutoRecallToggle(e.target.checked)}
+                    />
+                    Recall
+                  </label>
+
+                  <label className="setup-check" title="Enable Memory Palace auto-checkpointing">
+                    <input
+                      type="checkbox"
+                      checked={autoCheckpoint}
+                      onChange={(e) => handleAutoCheckpointToggle(e.target.checked)}
+                    />
+                    Checkpoint
+                  </label>
 
                   <button
                     type="button"
@@ -479,122 +585,27 @@ export function Composer(props: ComposerProps) {
                   )}
                 </div>
               </div>
-
-              <textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Message… (Enter to send, Shift+Enter for newline)"
-                disabled={busy && !settings.agentMode}
-                className="composer-textarea"
-                rows={2}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault()
-                    void send()
-                  }
-                }}
-              />
-
-              <div className="composer-bottom-bar">
-                <div className="composer-left-dock">
-                  {/* Tools */}
-                  <div className="composer-tools-group">
-                    <button
-                      type="button"
-                      className={`composer-tool-btn ${composerAdvanced ? 'active' : ''}`}
-                      onClick={() => setComposerAdvanced((v) => !v)}
-                      title="Show model, provider, and mode options"
-                    >
-                      {composerAdvanced ? 'Less' : 'Options'}
-                    </button>
-                    <button
-                      type="button"
-                      className={`composer-tool-btn composer-agent-quick ${getAssistMode(settings) !== 'chat' ? 'active' : ''}`}
-                      onClick={() => {
-                        const cur = getAssistMode(settings)
-                        const order: AssistMode[] = ['chat', 'agent', 'deep']
-                        const next = order[(order.indexOf(cur) + 1) % order.length]
-                        persist(applyAssistMode(settings, next))
-                        handleAutoAblitToggle(next !== 'chat')
-                        showToast(`Mode: ${next === 'chat' ? 'Chat' : next === 'agent' ? 'Agent' : 'Deep'}`, { type: 'info' })
-                      }}
-                      disabled={busy}
-                      title="Cycle Chat → Agent → Deep"
-                    >
-                      {getAssistMode(settings) === 'chat' ? 'Chat' : getAssistMode(settings) === 'agent' ? 'Agent' : 'Deep'}
-                    </button>
-                    <button
-                      type="button"
-                      className="composer-tool-btn composer-power-only"
-                      onClick={() => handleInspectDuckDb()}
-                      title="DuckDB identity index"
-                    >
-                      <img src="/icons/icon-duck.png" alt="DuckDB" className="chip-icon-img" />
-                      <span>DuckDB</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="composer-tool-btn composer-power-only"
-                      onClick={() => handleBranchSession()}
-                      title="Branch this chat"
-                    >
-                      Branch
-                    </button>
-                  </div>
-
-                  {/* Terminal */}
-                  <button
-                    type="button"
-                    className="btn-flip-mode"
-                    onClick={onOpenTerminal}
-                    title="Terminal (Ctrl+`)"
-                  >
-                    <span className="flip-icon-spin">🔄</span>
-                    <span>CONSOLE</span>
-                  </button>
-
-                  <div className="composer-divider" />
-
-                  {/* Organized Shortcut Stack */}
-                  <div className="composer-shortcut-stack">
-                    <div className="shortcut-item">
-                      <kbd>↵</kbd>
-                      <span>send</span>
-                    </div>
-                    <div className="shortcut-item">
-                      <kbd>⇧↵</kbd>
-                      <span>newline</span>
-                    </div>
-                    <div className="shortcut-item">
-                      <kbd>Ctrl+`</kbd>
-                      <span>flip</span>
-                    </div>
-                    <div className="shortcut-item">
-                      <kbd>⌘K</kbd>
-                      <span>palette</span>
-                    </div>
-                  </div>
-                </div>
-
+              </div>
+            </details>
+            <div className="composer-send-row">
                 <div className="composer-actions">
                   {busy && (
                     <button type="button" className="btn-stop" onClick={stop} title="Halt current execution">
-                      ⏹ ABORT
+                      Stop
                     </button>
                   )}
                   <button
                     type="button"
-                    className="primary"
+                    className="primary composer-send-btn"
                     onClick={() => void send()}
                     disabled={busy || !input.trim()}
-                    style={{ padding: '7px 18px', fontWeight: 800 }}
                     title="Send (Enter)"
                   >
-                    <img src="/icons/icon-lightning.png" alt="Send" className="btn-icon-img" />
-                    <span>SEND</span>
+                    Send
                   </button>
                 </div>
               </div>
+            </div>
             </div>
           </div>
 

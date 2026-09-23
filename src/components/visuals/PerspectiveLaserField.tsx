@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react'
-import type { AbliterationLevel } from '../lib/abliterationLevel'
-import { MOOD_PALETTES, type Mood, type RgbTriplet } from '../lib/rainMood'
+import type { AbliterationLevel } from '../../lib/abliterationLevel'
+import { MOOD_PALETTES, type Mood, type RgbTriplet } from '../../lib/rainMood'
 
 export interface PerspectiveLaserFieldProps {
   /** Abliteration / uncensored filter level (0: Locked -> 4: Void) */

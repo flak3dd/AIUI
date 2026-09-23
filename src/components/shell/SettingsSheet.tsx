@@ -1,19 +1,21 @@
 import { useState } from 'react'
-import type { StoredSettings, RainMode, LaserMode } from '../lib/providers'
-import { applyAssistMode, getAssistMode, type AssistMode } from '../lib/providers'
-import { ABLITERATION_LEVELS, ABLITERATION_LEVEL_ORDER } from '../lib/abliterationLevel'
-import type { MemPalaceStatus } from '../lib/mempalace'
-import type { SandboxStatus } from '../lib/bashShell'
-import { DRACULA_THEMES, type DraculaTheme, applyTheme, loadTheme } from '../lib/theme'
-import { MOOD_LABELS, MOOD_ORDER, type Mood } from '../lib/rainMood'
+import type { StoredSettings, RainMode, LaserMode, SparkRoute } from '../../lib/providers'
+import { applyAssistMode, getAssistMode, type AssistMode } from '../../lib/providers'
+import { ABLITERATION_LEVELS, ABLITERATION_LEVEL_ORDER } from '../../lib/abliterationLevel'
+import type { MemPalaceStatus } from '../../lib/mempalace'
+import type { SandboxStatus } from '../../lib/bashShell'
+import { DRACULA_THEMES, type DraculaTheme, applyTheme, loadTheme } from '../../lib/theme'
+import { EndpointHealthPanel } from './EndpointHealthPanel'
+import { MOOD_LABELS, MOOD_ORDER, type Mood } from '../../lib/rainMood'
 
-type TabId = 'model' | 'mesh' | 'agent' | 'memory' | 'appearance'
+type TabId = 'model' | 'mesh' | 'agent' | 'memory' | 'health' | 'appearance'
 
 const TABS: { id: TabId; label: string }[] = [
   { id: 'model', label: 'Model' },
   { id: 'mesh', label: 'Mesh' },
   { id: 'agent', label: 'Agent' },
   { id: 'memory', label: 'Memory' },
+  { id: 'health', label: 'Health' },
   { id: 'appearance', label: 'Appearance' },
 ]
 
@@ -154,6 +156,28 @@ export function SettingsSheet({
                       Offline ({sandboxStatus?.error || 'unreachable'})
                     </span>
                   )}
+                </span>
+              </div>
+              <div className="field">
+                <label>Spark vLLM route</label>
+                <div className="assist-mode-seg" role="group" aria-label="Spark vLLM route">
+                  {([
+                    { id: 'lan' as SparkRoute, label: 'LAN' },
+                    { id: 'tailscale' as SparkRoute, label: 'Tailscale' },
+                    { id: 'both' as SparkRoute, label: 'Both' },
+                  ]).map((route) => (
+                    <button
+                      key={route.id}
+                      type="button"
+                      className={`assist-mode-btn ${ (settings.sparkRoute || 'both') === route.id ? 'active' : '' }`}
+                      onClick={() => persist({ ...settings, sparkRoute: route.id })}
+                    >
+                      {route.label}
+                    </button>
+                  ))}
+                </div>
+                <span className="hint">
+                  LAN is 192.168.4.103:8000. Tailscale is 100.66.147.53:8000. Both opens the two endpoints together and streams the first one that answers.
                 </span>
               </div>
               <div className="field">
@@ -313,8 +337,28 @@ export function SettingsSheet({
                   Auto-checkpoint after replies
                 </label>
               </div>
+              <div className="field">
+                <label className="opt-switch" title="Continuously optimize chat responses using the local monitor + MemPalace signals">
+                  <span className="opt-switch-track">
+                    <input
+                      type="checkbox"
+                      checked={settings.optimizeChatResponses !== false}
+                      onChange={(e) =>
+                        persist({ ...settings, optimizeChatResponses: e.target.checked })
+                      }
+                    />
+                    <span className="opt-switch-thumb" />
+                  </span>
+                  <span className="opt-switch-label">
+                    <strong>Optimize chat responses</strong>
+                    <span className="hint">Live tuning from agent monitor + MemPalace (daemon :17337)</span>
+                  </span>
+                </label>
+              </div>
             </>
           )}
+
+          {tab === 'health' && <EndpointHealthPanel />}
 
           {tab === 'appearance' && (
             <>
@@ -412,8 +456,15 @@ export function SettingsSheet({
                         )
                       })}
                     </div>
-                    <span className="hint" style={{ marginTop: 4, color: ABLITERATION_LEVELS[settings.laserLevelManual ?? 3].color }}>
-                      ● {ABLITERATION_LEVELS[settings.laserLevelManual ?? 3].tag}: {ABLITERATION_LEVELS[settings.laserLevelManual ?? 3].desc}
+                    <span
+                      className="hint"
+                      style={{
+                        marginTop: 4,
+                        color: ABLITERATION_LEVELS[((settings.laserLevelManual ?? 3) as 0 | 1 | 2 | 3 | 4)].color,
+                      }}
+                    >
+                      ● {ABLITERATION_LEVELS[((settings.laserLevelManual ?? 3) as 0 | 1 | 2 | 3 | 4)].tag}:{' '}
+                      {ABLITERATION_LEVELS[((settings.laserLevelManual ?? 3) as 0 | 1 | 2 | 3 | 4)].desc}
                     </span>
                   </div>
                 )}

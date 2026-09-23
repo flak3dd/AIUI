@@ -2,8 +2,9 @@
  * Agent tools for web-api-app with integrated Auto Bash Shell & Cloud APIs.
  * Connects to local sandbox runner (:17330) and remote DGX Spark cluster.
  */
-import type { ChatMessage, ToolCall } from './api'
-import type { ProviderConfig } from './providers'
+import type { ChatMessage, ToolCall } from './api.ts'
+import { ApiClient } from './api.ts'
+import type { ProviderConfig } from './providers.ts'
 import {
   executeBashCommand,
   getStoredTarget,
@@ -15,9 +16,26 @@ import {
   listLinuxContainers,
   type ExecutionTarget,
   type BashExecResult,
-} from './bashShell'
-import { searchMemory, checkpointMemory } from './mempalace'
-import { getAllScaffolds, getScaffoldFiles } from './scaffoldTemplates'
+} from './bashShell.ts'
+import { MemoryPalace, searchMemory, checkpointMemory } from './mempalace.ts'
+import { getAllScaffolds, getScaffoldFiles } from './scaffoldTemplates.ts'
+import { formatAIUIResponse } from './devinResponseFormatter.ts'
+
+/** Reject host escapes and path traversal before any sandbox I/O. */
+function sandboxPathError(filePath: string): string | null {
+  const p = String(filePath || '').trim()
+  if (!p) return 'Path required'
+  if (p.includes('..')) return 'Directory traversal is not allowed'
+  if (
+    p.startsWith('/Users/') ||
+    p.startsWith('/home/') ||
+    p.includes('/Users/adminuser') ||
+    /^[A-Za-z]:\\/.test(p)
+  ) {
+    return 'Host paths are forbidden; use sandbox workspace paths only'
+  }
+  return null
+}
 
 export const AGENT_TOOLS = [
   {
@@ -25,7 +43,7 @@ export const AGENT_TOOLS = [
     function: {
       name: 'bash',
       description:
-        'Execute a shell command inside the local Mac, DGX Spark, or isolated Linux container (:17330). Returns REAL stdout, stderr, and exitCode. Use to inspect files, run tests, execute scripts (python, node, bash), compile code, check system status, etc.',
+        'Execute a shell command inside the DGX Spark sandbox or isolated Linux container (:17330). Returns REAL stdout, stderr, and exitCode. Use to inspect files, run tests, execute scripts (python, node, bash), compile code, check system status, etc.',
       parameters: {
         type: 'object',
         properties: {
@@ -49,7 +67,7 @@ export const AGENT_TOOLS = [
     function: {
       name: 'write_file',
       description:
-        'Write or overwrite a file in the DGX Spark sandbox. Essential for creating scripts, writing tests, or applying code fixes during self-healing.',
+        'Write or overwrite a file in the sandbox workspace (DGX Spark). Essential for creating scripts, writing tests, or applying code fixes during self-healing.',
       parameters: {
         type: 'object',
         properties: {
@@ -77,7 +95,7 @@ export const AGENT_TOOLS = [
     function: {
       name: 'read_file',
       description:
-        'Read the contents of a file in the DGX Spark sandbox. Use to inspect existing code, verify edits, or read error logs.',
+        'Read the contents of a file in the sandbox workspace (DGX Spark). Use to inspect existing code, verify edits, or read error logs.',
       parameters: {
         type: 'object',
         properties: {
@@ -373,6 +391,33 @@ export async function runTool(
     return JSON.stringify({ ok: false, error: 'Invalid tool arguments JSON' })
   }
 
+  if (name.startsWith('browser_')) {
+    try {
+      const res = await fetch('/api/browser-runs/tool', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, arguments: args }),
+      })
+      const text = await res.text()
+      try {
+        const parsed = JSON.parse(text)
+        const ok = parsed.ok === true && parsed.engine === 'playwright-chromium'
+        return JSON.stringify({
+          ...parsed,
+          ok,
+          exitCode: typeof parsed.exitCode === 'number' ? parsed.exitCode : ok ? 0 : 1,
+        })
+      } catch {
+        return text
+      }
+    } catch (err) {
+      return JSON.stringify({
+        ok: false,
+        error: err instanceof Error ? err.message : 'browser dispatch failed',
+      })
+    }
+  }
+
   if (name === 'bash' || name === 'exec') {
     const cmd = String(args.command || args.cmd || '').trim()
     if (!cmd) {
@@ -403,6 +448,10 @@ export async function runTool(
     const target = (args.target as ExecutionTarget) || getStoredTarget()
     if (!filePath) {
       return JSON.stringify({ ok: false, error: 'File path required' })
+    }
+    const pathErr = sandboxPathError(filePath)
+    if (pathErr) {
+      return JSON.stringify({ ok: false, error: pathErr })
     }
     try {
       const res = await fetch(`${getSandboxBaseUrl()}/api/sandbox/materialize`, {
@@ -445,6 +494,10 @@ export async function runTool(
     const target = (args.target as ExecutionTarget) || getStoredTarget()
     if (!filePath) {
       return JSON.stringify({ ok: false, error: 'File path required' })
+    }
+    const pathErr = sandboxPathError(filePath)
+    if (pathErr) {
+      return JSON.stringify({ ok: false, error: pathErr })
     }
 
     // Fast-path: check in-memory cache (TTL: 20 seconds)
@@ -685,6 +738,13 @@ export async function runTool(
     if (!dir) {
       return JSON.stringify({ ok: false, error: 'No directory specified' })
     }
+    const pathErr = sandboxPathError(dir)
+    if (pathErr || !dir.startsWith('/tmp/spark-sandboxes')) {
+      return JSON.stringify({
+        ok: false,
+        error: pathErr || 'Host paths are forbidden; sandbox workspace under /tmp/spark-sandboxes required',
+      })
+    }
     const target = (args.target as ExecutionTarget) || getStoredTarget()
     setStoredWorkspaceDir(dir)
     invalidateFileCache()
@@ -717,7 +777,23 @@ export async function runTool(
     })
   }
 
-  return JSON.stringify({ ok: false, error: `Unknown tool: ${name}` })
+  try {
+    const res = await fetch('/api/agent-runs/tool', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, arguments: args }),
+    })
+    const text = await res.text()
+    try {
+      const parsed = JSON.parse(text)
+      if (parsed && typeof parsed === 'object' && !('ok' in parsed)) parsed.ok = res.ok
+      return JSON.stringify(parsed)
+    } catch {
+      return JSON.stringify({ ok: false, error: text.slice(0, 300) || `Tool ${name} failed` })
+    }
+  } catch (err) {
+    return JSON.stringify({ ok: false, error: err instanceof Error ? err.message : `Unknown tool: ${name}` })
+  }
 }
 
 export interface ToolExecutionDetail {
@@ -778,10 +854,18 @@ export function formatToolOutputForContext(text: string, maxChars = 3500): strin
   return `${head}\n\n... [${omitted} characters truncated for context quality] ...\n\n${tail}`
 }
 
+export type ApplyToolCallsOptions = {
+  envId?: string
+  chatId?: string
+  target?: ExecutionTarget
+  provider?: string
+}
+
 export async function applyToolCalls(
   toolCalls: ToolCall[],
   provider: ProviderConfig,
   onBashResult?: (res: BashExecResult) => void,
+  _options?: ApplyToolCallsOptions,
 ): Promise<ApplyToolsResult> {
   const messages: ChatMessage[] = []
   const executions: ToolExecutionDetail[] = []
@@ -882,7 +966,7 @@ If the user asks you to run or change something and Agent Mode is off, explain t
 
 export const AGENT_SYSTEM = `You are Abliterated AI in Agent Mode — an autonomous systems engineer with live tools.
 
-Tools: bash, write_file, read_file, list_models, http_get_json, now, memory_search, memory_checkpoint, spawn_linux_container, destroy_linux_container, list_linux_containers, list_scaffolds, apply_scaffold, set_workspace_dir, get_workspace_dir.
+Tools: bash, write_file, read_file, replace_file_content, multi_replace_file_content, grep_search, get_file_outline, start_daemon, read_daemon_logs, stop_daemon, list_daemons, browser_open, browser_screenshot, browser_click, browser_type, browser_console_logs, spawn_subagent, hand_off_run, list_models, http_get_json, now, memory_search, memory_checkpoint, spawn_linux_container, destroy_linux_container, list_linux_containers, list_scaffolds, apply_scaffold, set_workspace_dir, get_workspace_dir, ssh, base64.
 Prefer native tool_calls. Only use <run>command</run> or fenced bash when tools are unavailable.
 Never fabricate stdout/stderr — only trust real tool results.
 
@@ -897,6 +981,7 @@ Rules & Output Directives:
 5. Anti-loop: no repeated preambles or identical answers; pivot when stuck.
 6. Memory: memory_search before guessing past project context; checkpoint meaningful outcomes.
 7. When done: return a compact dotpoint summary: what changed, evidence (exit codes, paths), and status.
+8. Before browser_open, state the full URL. Unattended opens only succeed for origins on the allowlist.
 
 Containers (optional): profiles python_data | gpu_spark | minimal_alpine; destroy when finished.`
 
@@ -956,6 +1041,203 @@ export function looksLikeKnowledgeQuery(text: string): boolean {
       q,
     ) || q.length > 48
   )
+}
+
+/** Format assistant content for the AIUI workspace transcript. */
+export function formatAgentResponseAsDevin(
+  content: string,
+  reasoning?: string,
+  toolCalls?: ToolCall[],
+  meta?: { status?: string; progress?: string },
+): string {
+  return formatAIUIResponse({
+    content: content || '',
+    reasoning: reasoning || undefined,
+    status: meta?.status,
+    progress: meta?.progress,
+    toolCalls: (toolCalls || []).map((tc) => {
+      let toolArgs: Record<string, unknown> = {}
+      try {
+        toolArgs = tc.function?.arguments ? JSON.parse(tc.function.arguments) : {}
+      } catch {
+        toolArgs = { raw: tc.function?.arguments || '' }
+      }
+      return {
+        toolName: tc.function?.name || 'unknown',
+        toolArgs,
+        status: 'pending' as const,
+      }
+    }),
+  })
+}
+
+// ------------------------------------------------------------------------------
+// Type-safe autonomous agent engine (generics + metrics)
+// ------------------------------------------------------------------------------
+
+export interface AgentTurnMetrics {
+  turnIndex: number
+  durationMs: number
+  cacheHit: boolean
+  success: boolean
+  timestamp: number
+  error?: string
+}
+
+export interface AgentMetricsSnapshot {
+  totalTurns: number
+  totalDurationMs: number
+  avgDurationMs: number
+  cacheHits: number
+  cacheMisses: number
+  cacheHitRatio: number
+  errorCount: number
+  lastExecutedAt?: number
+  turns: AgentTurnMetrics[]
+}
+
+export class AgentMetrics {
+  private turns: AgentTurnMetrics[] = []
+  private hits = 0
+  private misses = 0
+  private errors = 0
+
+  recordTurn(durationMs: number, cacheHit: boolean, error?: Error): void {
+    if (cacheHit) this.hits++
+    else this.misses++
+    if (error) this.errors++
+    this.turns.push({
+      turnIndex: this.turns.length + 1,
+      durationMs,
+      cacheHit,
+      success: !error,
+      timestamp: Date.now(),
+      error: error?.message,
+    })
+    if (this.turns.length > 500) this.turns.shift()
+  }
+
+  getSnapshot(): AgentMetricsSnapshot {
+    const total = this.hits + this.misses
+    const totalDuration = this.turns.reduce((acc, t) => acc + t.durationMs, 0)
+    return {
+      totalTurns: this.turns.length,
+      totalDurationMs: totalDuration,
+      avgDurationMs: this.turns.length > 0 ? Math.round(totalDuration / this.turns.length) : 0,
+      cacheHits: this.hits,
+      cacheMisses: this.misses,
+      cacheHitRatio: total > 0 ? this.hits / total : 0,
+      errorCount: this.errors,
+      lastExecutedAt: this.turns.length > 0 ? this.turns[this.turns.length - 1].timestamp : undefined,
+      turns: [...this.turns],
+    }
+  }
+
+  reset(): void {
+    this.turns = []
+    this.hits = 0
+    this.misses = 0
+    this.errors = 0
+  }
+}
+
+export interface AgentOptions<TContext = Record<string, unknown>> {
+  api?: ApiClient
+  memory?: MemoryPalace
+  context?: TContext
+  logger?: (level: 'info' | 'warn' | 'error' | 'debug', msg: string, data?: unknown) => void
+}
+
+export class Agent<TInput = string, TOutput = string, TContext = Record<string, unknown>> {
+  private api: ApiClient
+  private memory: MemoryPalace
+  private context: TContext
+  private metrics: AgentMetrics
+  private logger?: (level: 'info' | 'warn' | 'error' | 'debug', msg: string, data?: unknown) => void
+
+  constructor(options: AgentOptions<TContext> = {}) {
+    this.api = options.api || new ApiClient()
+    this.memory = options.memory || new MemoryPalace()
+    this.context = options.context || ({} as TContext)
+    this.metrics = new AgentMetrics()
+    this.logger = options.logger
+  }
+
+  async process(input: TInput, options?: { bypassCache?: boolean; timeout?: number }): Promise<TOutput> {
+    const t0 = performance.now()
+    let cacheHit = false
+    let err: Error | undefined
+    try {
+      if (!input || (typeof input === 'string' && input.trim().length === 0)) {
+        throw new Error('Input cannot be empty')
+      }
+      const cacheKey = typeof input === 'string' ? input : JSON.stringify(input)
+      if (!options?.bypassCache) {
+        const cached = this.memory.lookup(cacheKey)
+        if (cached !== undefined) {
+          cacheHit = true
+          this.log('info', 'Memory cache hit', { key: cacheKey })
+          if (typeof cached === 'string') {
+            try {
+              return JSON.parse(cached) as TOutput
+            } catch {
+              return cached as unknown as TOutput
+            }
+          }
+          return cached as unknown as TOutput
+        }
+      }
+      const queryStr = typeof input === 'string' ? input : JSON.stringify(input)
+      const rawResult = await this.api.query(queryStr, options?.timeout)
+      this.memory.store(cacheKey, rawResult)
+      this.log('info', 'Query completed and cached', { key: cacheKey })
+      try {
+        return JSON.parse(rawResult) as TOutput
+      } catch {
+        return rawResult as unknown as TOutput
+      }
+    } catch (e: unknown) {
+      err = e instanceof Error ? e : new Error(String(e))
+      this.log('error', 'Agent.process failed', { error: err.message })
+      throw err
+    } finally {
+      this.metrics.recordTurn(Math.round(performance.now() - t0), cacheHit, err)
+    }
+  }
+
+  async batchProcess(inputs: TInput[]): Promise<TOutput[]> {
+    return Promise.all(inputs.map((input) => this.process(input)))
+  }
+
+  getContext(): TContext {
+    return this.context
+  }
+
+  setContext(partial: Partial<TContext>): void {
+    this.context = { ...this.context, ...partial } as TContext
+  }
+
+  getMetrics(): AgentMetricsSnapshot {
+    return this.metrics.getSnapshot()
+  }
+
+  resetMetrics(): void {
+    this.metrics.reset()
+  }
+
+  setLogger(fn: (level: 'info' | 'warn' | 'error' | 'debug', msg: string, data?: unknown) => void): void {
+    this.logger = fn
+  }
+
+  private log(level: 'info' | 'warn' | 'error' | 'debug', msg: string, data?: unknown): void {
+    if (this.logger) {
+      try {
+        this.logger(level, msg, data)
+      } catch {
+        /* ignore logger failures */
+      }
+    }
+  }
 }
 
 

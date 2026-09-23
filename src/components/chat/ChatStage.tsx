@@ -2,9 +2,10 @@ import { useRef, useEffect, useMemo } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { QuickStartHero } from './QuickStartHero'
 import { MessageContent } from './MessageContent'
-import { AgentBashWorkingsSection } from './AgentBashWorkingsSection'
-import type { UiMessage } from '../types/ui'
-import type { BashExecResult } from '../lib/bashShell'
+import { AgentBashWorkingsSection } from '../terminal/AgentBashWorkingsSection'
+import type { UiMessage } from '../../types/ui'
+import type { BashExecResult } from '../../lib/bashShell'
+import type { AssistMode } from '../../lib/providers'
 
 export interface ChatStageProps {
   messages: UiMessage[]
@@ -12,6 +13,8 @@ export interface ChatStageProps {
   sandboxOnline?: boolean
   mempalaceOnline?: boolean
   onSelectPrompt: (prompt: string) => void
+  onChooseMode?: (mode: AssistMode) => void
+  assistMode?: AssistMode
   gatedNotice: { model: string; alt: string } | null
   onSwitchUngated: (model: string) => void
   inlineExecResults: Record<string, BashExecResult>
@@ -25,12 +28,13 @@ export interface ChatStageProps {
   onFollowUp?: (prompt: string) => void
   scrollToken?: number
   streamingMessageId?: string
+  viewMode?: 'studio' | 'devin'
 }
 
 const VIRTUALIZE_AFTER = 40
 
 type ChatItem =
-  | { type: 'message'; message: UiMessage }
+  | { type: 'role_run'; id: string; role: UiMessage['role']; messages: UiMessage[] }
   | { type: 'tool_group'; id: string; messages: UiMessage[] }
   | { type: 'status_chip'; message: UiMessage }
 
@@ -40,6 +44,8 @@ export function ChatStage({
   sandboxOnline,
   mempalaceOnline,
   onSelectPrompt,
+  onChooseMode,
+  assistMode,
   gatedNotice,
   onSwitchUngated,
   inlineExecResults,
@@ -53,14 +59,16 @@ export function ChatStage({
   onFollowUp,
   scrollToken = 0,
   streamingMessageId,
+  viewMode = 'studio',
 }: ChatStageProps) {
   const parentRef = useRef<HTMLDivElement | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
 
-  // Group consecutive tool messages into a single consolidated bash workings section
+  // Group consecutive same-role messages into quiet runs; tools stay consolidated
   const chatItems = useMemo<ChatItem[]>(() => {
     const items: ChatItem[] = []
     let currentToolGroup: UiMessage[] = []
+    let currentRoleRun: UiMessage[] = []
 
     const flushToolGroup = () => {
       if (currentToolGroup.length > 0) {
@@ -73,18 +81,36 @@ export function ChatStage({
       }
     }
 
+    const flushRoleRun = () => {
+      if (currentRoleRun.length > 0) {
+        items.push({
+          type: 'role_run',
+          id: `run_${currentRoleRun[0].id}`,
+          role: currentRoleRun[0].role,
+          messages: [...currentRoleRun],
+        })
+        currentRoleRun = []
+      }
+    }
+
     for (const m of messages) {
       if (m.role === 'tool') {
+        flushRoleRun()
         currentToolGroup.push(m)
       } else if (m.name === 'status_chip') {
         flushToolGroup()
+        flushRoleRun()
         items.push({ type: 'status_chip', message: m })
       } else {
         flushToolGroup()
-        items.push({ type: 'message', message: m })
+        if (currentRoleRun.length > 0 && currentRoleRun[0].role !== m.role) {
+          flushRoleRun()
+        }
+        currentRoleRun.push(m)
       }
     }
     flushToolGroup()
+    flushRoleRun()
     return items
   }, [messages])
 
@@ -110,13 +136,13 @@ export function ChatStage({
 
   const showHero = messages.length === 1 && messages[0]?.id === 'welcome'
 
-  const renderBubble = (m: UiMessage) => {
+  const renderBubble = (m: UiMessage, continues = false) => {
     if (m.id === 'welcome' && messages.length === 1) return null
     const isStreaming = m.role === 'assistant' && m.id === streamingMessageId
     return (
       <div
         key={m.id}
-        className={`bubble ${m.role} ${isStreaming ? 'is-streaming' : ''}`}
+        className={`bubble ${m.role} ${continues ? 'continues' : ''} ${isStreaming ? 'is-streaming' : ''}`}
         data-index={m.id}
       >
         <div className="bubble-actions">
@@ -156,6 +182,7 @@ export function ChatStage({
           onCopyCode={onCopyCode}
           onRunCode={onRunCode}
           onAutoHeal={onAutoHeal}
+          devinStyle={viewMode === 'devin'}
         />
         {m.execResult && (
           <div className="tool-exec-strip">
@@ -168,6 +195,48 @@ export function ChatStage({
     )
   }
 
+  const renderChatItem = (item: ChatItem) => {
+    if (item.type === 'tool_group') {
+      return (
+        <div key={item.id} className="agent-bash-workings">
+          <AgentBashWorkingsSection
+            messages={item.messages}
+            copiedCellKey={copiedCellKey}
+            onCopyCode={onCopyCode}
+          />
+        </div>
+      )
+    }
+    if (item.type === 'status_chip') {
+      return (
+        <div key={item.message.id} className="status-chip-block">
+          <div className="status-chip-row" role="status">
+            <span className="status-chip">{item.message.content.replace(/^⚡\s*/, '')}</span>
+          </div>
+          {item.message.followUps && item.message.followUps.length > 0 && (
+            <div className="response-followups-row">
+              {item.message.followUps.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  className="response-followup-chip"
+                  onClick={() => onFollowUp?.(s.prompt)}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )
+    }
+    return (
+      <div key={item.id} className={`chat-run role-${item.role}`}>
+        {item.messages.map((m, i) => renderBubble(m, i > 0))}
+      </div>
+    )
+  }
+
   return (
     <div className="chat-stage">
       <div className="messages" ref={parentRef}>
@@ -175,6 +244,8 @@ export function ChatStage({
           {showHero && (
             <QuickStartHero
               onSelectPrompt={onSelectPrompt}
+              onChooseMode={onChooseMode}
+              assistMode={assistMode}
               sparkHost={sparkHost}
               sandboxOnline={sandboxOnline}
               mempalaceOnline={mempalaceOnline}
@@ -191,9 +262,9 @@ export function ChatStage({
                 <button
                   type="button"
                   className="ghost"
-                  onClick={() => onSwitchUngated('Qwen/Qwen2.5-7B-Instruct')}
+                  onClick={() => onSwitchUngated('Qwen/Qwen2.5-Coder-32B-Instruct')}
                 >
-                  Switch to Qwen 2.5 7B
+                  Switch to Qwen 2.5 Coder 32B
                 </button>
                 <a
                   href={`https://featherless.ai/models/${gatedNotice.model}`}
@@ -209,39 +280,7 @@ export function ChatStage({
 
           {!useVirtual && (
             <>
-              {chatItems.map((item) => (
-                <div key={item.type === 'message' ? item.message.id : item.type === 'tool_group' ? item.id : item.message.id}>
-                  {item.type === 'tool_group' ? (
-                    <AgentBashWorkingsSection
-                      messages={item.messages}
-                      copiedCellKey={copiedCellKey}
-                      onCopyCode={onCopyCode}
-                    />
-                  ) : item.type === 'status_chip' ? (
-                    <div className="status-chip-block">
-                      <div className="status-chip-row" role="status">
-                        <span className="status-chip">{item.message.content.replace(/^⚡\s*/, '')}</span>
-                      </div>
-                      {item.message.followUps && item.message.followUps.length > 0 && (
-                        <div className="response-followups-row">
-                          {item.message.followUps.map((s) => (
-                            <button
-                              key={s.id}
-                              type="button"
-                              className="response-followup-chip"
-                              onClick={() => onFollowUp?.(s.prompt)}
-                            >
-                              {s.label}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    renderBubble(item.message)
-                  )}
-                </div>
-              ))}
+              {chatItems.map((item) => renderChatItem(item))}
               <div ref={bottomRef} />
             </>
           )}
@@ -254,9 +293,13 @@ export function ChatStage({
               {virtualizer.getVirtualItems().map((row) => {
                 const item = chatItems[row.index]
                 if (!item) return null
+                const key =
+                  item.type === 'tool_group' || item.type === 'role_run'
+                    ? item.id
+                    : item.message.id
                 return (
                   <div
-                    key={item.type === 'tool_group' ? item.id : item.message.id}
+                    key={key}
                     data-index={row.index}
                     ref={virtualizer.measureElement}
                     className="virtual-message-row"
@@ -268,35 +311,7 @@ export function ChatStage({
                       transform: `translateY(${row.start}px)`,
                     }}
                   >
-                    {item.type === 'tool_group' ? (
-                      <AgentBashWorkingsSection
-                        messages={item.messages}
-                        copiedCellKey={copiedCellKey}
-                        onCopyCode={onCopyCode}
-                      />
-                    ) : item.type === 'status_chip' ? (
-                      <div className="status-chip-block">
-                        <div className="status-chip-row" role="status">
-                          <span className="status-chip">{item.message.content.replace(/^⚡\s*/, '')}</span>
-                        </div>
-                        {item.message.followUps && item.message.followUps.length > 0 && (
-                          <div className="response-followups-row">
-                            {item.message.followUps.map((s) => (
-                              <button
-                                key={s.id}
-                                type="button"
-                                className="response-followup-chip"
-                                onClick={() => onFollowUp?.(s.prompt)}
-                              >
-                                {s.label}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      renderBubble(item.message)
-                    )}
+                    {renderChatItem(item)}
                   </div>
                 )
               })}

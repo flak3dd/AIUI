@@ -1,4 +1,5 @@
 export type DraculaTheme =
+  | 'aiui'
   | 'night'
   | 'boldface'
   | 'penumbra'
@@ -18,6 +19,14 @@ export interface ThemeMeta {
 }
 
 export const DRACULA_THEMES: ThemeMeta[] = [
+  {
+    id: 'aiui',
+    name: 'AIUI Signature',
+    bg: '#0E0A16',
+    accent: '#BE50FF',
+    description: 'AIUI Neon: Deep void purple · neon violet primary · lime green signal',
+    isDark: true,
+  },
   {
     id: 'night',
     name: 'Abliterated Night',
@@ -90,6 +99,7 @@ export function loadTheme(): DraculaTheme {
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
   const ok: DraculaTheme[] = [
+    'aiui',
     'night',
     'boldface',
     'penumbra',
@@ -103,7 +113,7 @@ export function loadTheme(): DraculaTheme {
   } catch {
     // fallback
   }
-  return 'night'
+  return 'aiui'
 }
 
 export function applyTheme(theme: DraculaTheme) {

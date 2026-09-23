@@ -1,5 +1,6 @@
-import React from 'react'
-import type { BashExecResult, ExecutionTarget, SandboxStatus } from '../lib/bashShell'
+import React, { useState, useCallback, useEffect, useRef } from 'react'
+import type { BashExecResult, ExecutionTarget, SandboxStatus } from '../../lib/bashShell'
+import { TerminalLineOutput } from './TerminalLineOutput'
 
 export interface TerminalDrawerProps {
   open: boolean
@@ -25,6 +26,9 @@ export interface TerminalDrawerProps {
   toggleCollapseOutput: (idx: number) => void
   activeWorkspaceDir?: string
   onOpenExplorer?: () => void
+  onOpenSshTool?: () => void
+  onOpenBase64Tool?: () => void
+  onOpenDynamicTools?: () => void
 }
 
 export function TerminalDrawer(props: TerminalDrawerProps) {
@@ -52,12 +56,96 @@ export function TerminalDrawer(props: TerminalDrawerProps) {
     toggleCollapseOutput,
     activeWorkspaceDir,
     onOpenExplorer,
+    onOpenSshTool,
+    onOpenBase64Tool,
+    onOpenDynamicTools,
   } = props
+
+  // Draggable Height State (persisted to localStorage)
+  const [customHeight, setCustomHeight] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('terminal_drawer_height')
+      if (saved) {
+        const parsed = parseInt(saved, 10)
+        if (!isNaN(parsed) && parsed >= 120) {
+          return Math.max(120, Math.min(typeof window !== 'undefined' ? window.innerHeight - 80 : 800, parsed))
+        }
+      }
+    } catch {}
+    return termHeightMode === 'docked'
+      ? 140
+      : termHeightMode === 'compact'
+      ? 220
+      : termHeightMode === 'maximized'
+      ? 640
+      : 340
+  })
+
+  const [isDraggingHeight, setIsDraggingHeight] = useState<boolean>(false)
+  const dragStartYRef = useRef<number>(0)
+  const dragStartHeightRef = useRef<number>(customHeight)
+
+  const handleStartDrag = useCallback(
+    (e: React.MouseEvent | React.TouchEvent) => {
+      e.preventDefault()
+      setIsDraggingHeight(true)
+      const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY
+      dragStartYRef.current = clientY
+      dragStartHeightRef.current = customHeight
+    },
+    [customHeight]
+  )
+
+  useEffect(() => {
+    if (!isDraggingHeight) return
+
+    const handleMove = (e: MouseEvent | TouchEvent) => {
+      const clientY = 'touches' in e ? e.touches[0].clientY : (e as MouseEvent).clientY
+      const deltaY = dragStartYRef.current - clientY // Dragging upwards increases height
+      const maxH = typeof window !== 'undefined' ? window.innerHeight - 70 : 900
+      const newH = Math.max(120, Math.min(maxH, dragStartHeightRef.current + deltaY))
+      setCustomHeight(newH)
+
+      // Dynamically reflect into height modes
+      if (newH <= 160 && termHeightMode !== 'docked') {
+        setTermHeightMode('docked')
+      } else if (newH > 160 && newH <= 260 && termHeightMode !== 'compact') {
+        setTermHeightMode('compact')
+      } else if (newH > 260 && newH <= 500 && termHeightMode !== 'standard') {
+        setTermHeightMode('standard')
+      } else if (newH > 500 && termHeightMode !== 'maximized') {
+        setTermHeightMode('maximized')
+      }
+    }
+
+    const handleEnd = () => {
+      setIsDraggingHeight(false)
+      try {
+        localStorage.setItem('terminal_drawer_height', String(customHeight))
+      } catch {}
+    }
+
+    window.addEventListener('mousemove', handleMove)
+    window.addEventListener('mouseup', handleEnd)
+    window.addEventListener('touchmove', handleMove)
+    window.addEventListener('touchend', handleEnd)
+    return () => {
+      window.removeEventListener('mousemove', handleMove)
+      window.removeEventListener('mouseup', handleEnd)
+      window.removeEventListener('touchmove', handleMove)
+      window.removeEventListener('touchend', handleEnd)
+    }
+  }, [isDraggingHeight, customHeight, termHeightMode, setTermHeightMode])
 
   if (!open) return null
 
   return (
-    <div className="terminal-drawer" role="dialog" aria-label="Terminal console">
+    <div
+      className={`terminal-drawer ${isDraggingHeight ? 'resizing' : ''}`}
+      role="dialog"
+      aria-label="Terminal console"
+      style={{ height: `${customHeight}px` }}
+    >
       <div
         className={`terminal-flip-capsule ${
           termHeightMode === 'docked'
@@ -69,8 +157,17 @@ export function TerminalDrawer(props: TerminalDrawerProps) {
             : 'height-standard'
         }`}
       >
-        <div className="terminal-mobile-drag-bar" aria-hidden="true">
-          <span className="terminal-drag-handle" />
+        {/* Top Draggable Resizer Bar */}
+        <div
+          className={`terminal-drag-resizer ${isDraggingHeight ? 'active' : ''}`}
+          onMouseDown={handleStartDrag}
+          onTouchStart={handleStartDrag}
+          title="Drag up or down to resize Dev Panel height"
+        >
+          <span className="terminal-drag-pill" />
+          <span className="terminal-drag-hint">
+            {isDraggingHeight ? `${customHeight}px` : 'DRAG TO RESIZE'}
+          </span>
         </div>
         <div className="terminal-header">
           <div className="terminal-title-group">
@@ -156,6 +253,30 @@ export function TerminalDrawer(props: TerminalDrawerProps) {
               <button
                 type="button"
                 className="term-chip"
+                onClick={onOpenSshTool}
+                title="Open Remote SSH Cluster Runner (DGX Spark)"
+              >
+                🔑 SSH
+              </button>
+              <button
+                type="button"
+                className="term-chip"
+                onClick={onOpenBase64Tool}
+                title="Open UTF-8 safe Base64 Encoder / Decoder Toolkit"
+              >
+                🔤 Base64
+              </button>
+              <button
+                type="button"
+                className="term-chip"
+                onClick={onOpenDynamicTools}
+                title="Open Dynamic Tools Architecture & JIT Extension Manager"
+              >
+                🧩 Tools
+              </button>
+              <button
+                type="button"
+                className="term-chip"
                 onClick={() => setTerminalLogs([])}
                 title="Clear console output"
               >
@@ -178,17 +299,32 @@ export function TerminalDrawer(props: TerminalDrawerProps) {
               type="button"
               className="term-btn-window"
               onClick={() =>
-                setTermHeightMode((prev) =>
-                  prev === 'compact'
-                    ? 'standard'
-                    : prev === 'standard'
-                    ? 'maximized'
-                    : prev === 'maximized'
-                    ? 'docked'
-                    : 'compact',
-                )
+                setTermHeightMode((prev) => {
+                  const next =
+                    prev === 'compact'
+                      ? 'standard'
+                      : prev === 'standard'
+                      ? 'maximized'
+                      : prev === 'maximized'
+                      ? 'docked'
+                      : 'compact'
+                  const maxH = typeof window !== 'undefined' ? window.innerHeight - 70 : 800
+                  const targetH =
+                    next === 'compact'
+                      ? 220
+                      : next === 'standard'
+                      ? 340
+                      : next === 'maximized'
+                      ? Math.min(maxH, 700)
+                      : 140
+                  setCustomHeight(targetH)
+                  try {
+                    localStorage.setItem('terminal_drawer_height', String(targetH))
+                  } catch {}
+                  return next
+                })
               }
-              title={`Current: ${termHeightMode}. Click to cycle height mode`}
+              title={`Current: ${termHeightMode}. Click to cycle height mode, or drag top bar`}
             >
               {termHeightMode === 'compact'
                 ? '⤢ Standard'
@@ -221,6 +357,20 @@ export function TerminalDrawer(props: TerminalDrawerProps) {
                     <span>🛰️ READY · TARGET: {bashTarget.toUpperCase()}</span>
                   </div>
                   <div className="term-empty-suggestions">
+                    <button
+                      type="button"
+                      className="term-empty-pill"
+                      onClick={() => void runBashCommand('git status', bashTarget)}
+                    >
+                      git status
+                    </button>
+                    <button
+                      type="button"
+                      className="term-empty-pill"
+                      onClick={() => void runBashCommand('git init && git status', bashTarget)}
+                    >
+                      ⚡ git init
+                    </button>
                     <button
                       type="button"
                       className="term-empty-pill"
@@ -259,6 +409,9 @@ export function TerminalDrawer(props: TerminalDrawerProps) {
                   const outputText = (log.stdout || '').trim()
                   const lineCount = outputText ? outputText.split('\n').length : 0
                   const canCollapse = lineCount > 8
+                  const isGitRepoError =
+                    (log.stderr && log.stderr.includes('not a git repository')) ||
+                    (log.stdout && log.stdout.includes('not a git repository'))
 
                   return (
                     <div key={idx} className={`term-entry ${log.ok ? 'ok' : 'error'}`}>
@@ -310,11 +463,33 @@ export function TerminalDrawer(props: TerminalDrawerProps) {
                       </div>
 
                       {log.stdout && (
-                        <pre className={`term-output ${isCollapsed ? 'collapsed' : ''}`}>
-                          {log.stdout}
-                        </pre>
+                        <TerminalLineOutput
+                          content={log.stdout}
+                          className={isCollapsed ? 'collapsed' : ''}
+                        />
                       )}
-                      {log.stderr && <pre className="term-stderr">{log.stderr}</pre>}
+                      {log.stderr && <TerminalLineOutput content={log.stderr} isStderr />}
+
+                      {/* Single click connect banner on fatal: not a git repo error */}
+                      {isGitRepoError && (
+                        <div className="term-git-fix-banner">
+                          <div className="term-git-fix-info">
+                            <span className="term-git-fix-icon">⚠️</span>
+                            <span>
+                              <strong>Not a Git Repository:</strong> Workspace lacks a <code>.git</code> repository. Single click to initialize and connect.
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            className="term-git-fix-btn"
+                            onClick={() => void runBashCommand('git init && git status', bashTarget)}
+                            disabled={executingCmd}
+                            title="Single click to initialize Git in workspace"
+                          >
+                            ⚡ Single Click: Connect to Repo (git init)
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )
                 })

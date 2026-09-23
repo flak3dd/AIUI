@@ -3,8 +3,9 @@ import {
   executeBashCommand,
   getStoredWorkspaceDir,
   setStoredWorkspaceDir,
+  getActiveWorkspaceEnvId,
   type ExecutionTarget,
-} from '../lib/bashShell'
+} from '../../lib/bashShell'
 
 export interface WorkspaceExplorerProps {
   isOpen: boolean
@@ -13,6 +14,7 @@ export interface WorkspaceExplorerProps {
   onSwitchTarget: (t: ExecutionTarget) => void
   activeWorkspaceDir?: string
   onChangeWorkspaceDir?: (dir: string) => void
+  envId?: string
 }
 
 /** Default writable roots per execution target */
@@ -53,7 +55,9 @@ export const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = ({
   onSwitchTarget,
   activeWorkspaceDir,
   onChangeWorkspaceDir,
+  envId,
 }) => {
+  const effectiveEnvId = envId || getActiveWorkspaceEnvId()
   const [targetPath, setTargetPath] = useState(() => defaultPathFor(currentTarget, activeWorkspaceDir))
   const [files, setFiles] = useState<FileEntry[]>([])
   const [loading, setLoading] = useState(false)
@@ -79,7 +83,7 @@ export const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = ({
     setSelectedFile(null)
     setFileContent(null)
     try {
-      const res = await executeBashCommand(`ls -la "${dir}" 2>&1`, target, 'web_session', undefined, dir)
+      const res = await executeBashCommand(`ls -la "${dir}" 2>&1`, target, effectiveEnvId, undefined, dir)
       if (!res.ok) {
         setError(`Failed to read directory (${res.exitCode}): ${res.stderr || res.stdout}`)
         setFiles([])
@@ -133,7 +137,7 @@ export const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = ({
     setContentLoading(true)
     const filePath = `${targetPath.replace(/\/$/, '')}/${name}`
     try {
-      const res = await executeBashCommand(`head -n 250 "${filePath}" 2>&1`, currentTarget, 'web_session', undefined, targetPath)
+      const res = await executeBashCommand(`head -n 250 "${filePath}" 2>&1`, currentTarget, effectiveEnvId, undefined, targetPath)
       setFileContent(res.stdout || res.stderr || '(empty file)')
     } catch (err: any) {
       setFileContent(`Error reading file: ${err?.message || String(err)}`)
@@ -196,7 +200,7 @@ export const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = ({
       const res = await executeBashCommand(
         `mkdir -p -- ${quotedParent} ${quoted} && ls -ld -- ${quoted}`,
         currentTarget,
-        'web_session',
+        effectiveEnvId,
         undefined,
         parent,
       )

@@ -36,7 +36,7 @@ export interface MeshPulseProps {
 }
 
 export const MeshPulse: React.FC<MeshPulseProps> = ({
-  sparkHost = '192.168.4.103',
+  sparkHost = '100.66.147.53',
   sandboxOnline = false,
   sandboxLatency,
   mempalaceOnline = false,
@@ -72,7 +72,7 @@ export const MeshPulse: React.FC<MeshPulseProps> = ({
       }
 
       try {
-        const host = sparkHost || '192.168.4.103'
+        const host = sparkHost || '100.66.147.53'
         const resSpark = await fetch(`http://${host}:17325/api/status`, {
           signal: AbortSignal.timeout(2500),
         })
