@@ -4,7 +4,63 @@
  */
 
 import type { ProviderConfig } from './providers.ts';
+import {
+  SPARK_DEFAULT_HOST,
+  SPARK_DEFAULT_PORT,
+  SPARK_TAILSCALE_HOST,
+  sparkEndpointGroups,
+} from './providers.ts';
 import { resolveThinkingKwargs } from './thinkingOptions.ts';
+
+/** WebKit says "Load failed"; Chromium says "Failed to fetch". */
+export function isFetchNetworkError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message || '';
+  return (
+    err.name === 'TypeError' ||
+    /load failed|failed to fetch|networkerror|network request failed|fetch failed/i.test(msg)
+  );
+}
+
+function shouldSparkTailscaleFailover(err: unknown): boolean {
+  if (isFetchNetworkError(err)) return true;
+  if (!(err instanceof Error)) return false;
+  return /HTTP 502|HTTP 503|HTTP 504|Unreachable|vLLM header timeout/i.test(err.message);
+}
+
+export function formatSparkUnreachableError(err: unknown): Error {
+  const raw = err instanceof Error ? err.message : String(err);
+  if (/load failed|failed to fetch/i.test(raw)) {
+    return new Error(
+      `Spark vLLM unreachable (${raw}). LAN may be down — use route Both/Tailscale, or check :17332 / vLLM.`,
+    );
+  }
+  return err instanceof Error ? err : new Error(raw);
+}
+
+function providerAlreadyHasTailscale(provider: ProviderConfig): boolean {
+  const groups = provider.endpointGroups?.length
+    ? provider.endpointGroups
+    : [[provider.baseUrl, ...(provider.fallbackBaseUrls ?? [])]];
+  return groups.some((group) =>
+    group.some(
+      (url) =>
+        String(url).includes(SPARK_TAILSCALE_HOST) ||
+        String(url).includes('/vllm-ts') ||
+        String(url).includes(`/spark/${SPARK_TAILSCALE_HOST}/`),
+    ),
+  );
+}
+
+function sparkTailscaleFailoverProvider(provider: ProviderConfig): ProviderConfig {
+  const groups = sparkEndpointGroups(SPARK_DEFAULT_HOST, SPARK_DEFAULT_PORT, true, 'tailscale');
+  return {
+    ...provider,
+    baseUrl: groups[0][0],
+    fallbackBaseUrls: groups[0].slice(1),
+    endpointGroups: groups,
+  };
+}
 
 export interface RetryOptions {
   maxRetries?: number;
@@ -344,7 +400,7 @@ export async function streamChat(
   body: Record<string, unknown>,
   handlers: StreamHandlers,
   signal?: AbortSignal,
-  opts?: { enableThinking?: boolean },
+  opts?: { enableThinking?: boolean; skipSparkFailover?: boolean },
 ): Promise<{
   content: string;
   reasoning: string;
@@ -357,20 +413,37 @@ export async function streamChat(
     const thinking = resolveThinkingKwargs(provider.id, Boolean(opts?.enableThinking));
     if (thinking) reqBody.chat_template_kwargs = thinking;
   }
-  const opened = await openFirstEndpoint(
-    provider,
-    '/chat/completions',
-    {
-      method: 'POST',
-      headers: authHeaders(provider, {
-        'Content-Type': 'application/json',
-        Accept: 'text/event-stream',
-      }),
-      body: JSON.stringify(reqBody),
-    },
-    provider.id === 'spark' ? 12000 : 90000,
-    signal,
-  );
+  let opened: OpenedResponse;
+  try {
+    opened = await openFirstEndpoint(
+      provider,
+      '/chat/completions',
+      {
+        method: 'POST',
+        headers: authHeaders(provider, {
+          'Content-Type': 'application/json',
+          Accept: 'text/event-stream',
+        }),
+        body: JSON.stringify(reqBody),
+      },
+      provider.id === 'spark' ? 12000 : 90000,
+      signal,
+    );
+  } catch (err) {
+    // LAN-only (or dead LAN chain) → one Tailscale retry so Studio chat does not die with "Load failed".
+    if (
+      provider.id === 'spark' &&
+      !opts?.skipSparkFailover &&
+      shouldSparkTailscaleFailover(err) &&
+      !providerAlreadyHasTailscale(provider)
+    ) {
+      return streamChat(sparkTailscaleFailoverProvider(provider), body, handlers, signal, {
+        ...opts,
+        skipSparkFailover: true,
+      });
+    }
+    throw provider.id === 'spark' ? formatSparkUnreachableError(err) : err;
+  }
   const res = opened.response;
   try {
 

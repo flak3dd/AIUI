@@ -199,8 +199,12 @@ export function getMempalaceBaseUrl(): string {
     const stored = localStorage.getItem(STORAGE_MEMPALACE_URL_KEY);
     if (stored) return stored;
   } catch {}
-  if (typeof window !== 'undefined' && (window.location.port === '5173' || window.location.port === '5174')) {
-    return `${window.location.origin}/mempalace-bridge`;
+  if (typeof window !== 'undefined') {
+    const port = window.location.port || '';
+    // Same-origin Vite proxy (see vite.config.ts /mempalace-bridge). Include :5175 when Vite bumps the port.
+    if (port === '5173' || port === '5174' || port === '5175' || port === '4173') {
+      return `${window.location.origin}/mempalace-bridge`;
+    }
   }
   return DEFAULT_MEMPALACE_URL;
 }

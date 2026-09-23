@@ -1,0 +1,36 @@
+{
+  "id": "run-1790142243867",
+  "goal": "automate betzillo sign up",
+  "status": "running",
+  "steps": [
+    {
+      "tool": "nl_automate",
+      "ok": false,
+      "exitCode": null,
+      "result": "{\"ok\":false,\"text\":\"Origin not allowlisted: http://127.0.0.1:5173. Add it before unattended navigation.\",\"steps\":[{\"action\":\"open\",\"ok\":false,\"detail\":\"Origin not allowlisted: http://127.0.0.1:5173. Add it before unattended navigation.\"}]}",
+      "at": "2026-09-23T05:44:07.424Z"
+    },
+    {
+      "tool": "nl_automate",
+      "ok": false,
+      "exitCode": null,
+      "result": "{\"ok\":false,\"text\":\"Origin not allowlisted: http://127.0.0.1:5173. Add it before unattended navigation.\",\"steps\":[{\"action\":\"open\",\"ok\":false,\"detail\":\"Origin not allowlisted: http://127.0.0.1:5173. Add it before unattended navigation.\"}]}",
+      "at": "2026-09-23T05:44:26.321Z"
+    },
+    {
+      "tool": "nl_automate",
+      "ok": false,
+      "exitCode": null,
+      "result": "{\"ok\":false,\"text\":\"Origin not allowlisted: http://127.0.0.1:5173. Add it before unattended navigation.\",\"steps\":[{\"action\":\"open\",\"ok\":false,\"detail\":\"Origin not allowlisted: http://127.0.0.1:5173. Add it before unattended navigation.\"}]}",
+      "at": "2026-09-23T05:45:17.054Z"
+    }
+  ],
+  "filesTouched": [],
+  "lastCommand": "",
+  "browserRunId": null,
+  "milestones": [],
+  "children": [],
+  "checkpoint": null,
+  "finishedAt": null,
+  "updatedAt": "2026-09-23T05:45:17.054Z"
+}

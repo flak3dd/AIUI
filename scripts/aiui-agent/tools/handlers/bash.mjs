@@ -1,7 +1,10 @@
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import util from 'node:util';
 import { exec, spawn } from 'node:child_process';
 import {
+  ROOT_DIR,
   SANDBOX_RUNNER_URL,
   SSH_KEY,
   SPARK_HOST,
@@ -11,8 +14,98 @@ import {
 
 const execP = util.promisify(exec);
 
+/** Once Spark SSH returns connection refused, skip further SSH for this turn. */
+let sparkSshDownReason = null;
+
+export function resetSparkSshCircuit() {
+  sparkSshDownReason = null;
+}
+
+export function isSparkSshDown() {
+  return Boolean(sparkSshDownReason);
+}
+
+function markSparkSshDown(detail = '') {
+  const msg = String(detail || 'Connection refused').trim().slice(0, 240);
+  sparkSshDownReason = msg || 'Connection refused';
+}
+
 function allowHostExec() {
   return process.env.AIUI_ALLOW_HOST_EXEC === '1';
+}
+
+function isLocalMacWorkspace(workspaceDir = process.cwd()) {
+  const wd = path.resolve(workspaceDir || process.cwd());
+  if (wd.startsWith('/Users/')) return true;
+  const root = ROOT_DIR ? path.resolve(ROOT_DIR) : '';
+  if (root && (wd === root || wd.startsWith(root + path.sep))) return true;
+  const home = process.env.HOME || os.homedir();
+  if (home) {
+    for (const leaf of ['AIUI', 'aiui']) {
+      const candidate = path.resolve(home, leaf);
+      if (wd === candidate || wd.startsWith(candidate + path.sep)) return true;
+    }
+  }
+  return false;
+}
+
+function commandImpliesSparkRemote(command = '') {
+  return /\/tmp\/spark-sandboxes\b|\/mnt\/nvme\b|\bnvidia-smi\b/i.test(String(command || ''));
+}
+
+/**
+ * True when the command clearly targets Mac host paths / this workspace.
+ * Those must never be classified as Spark SSH work.
+ */
+export function commandImpliesLocalMac(command = '', workspaceDir = process.cwd()) {
+  const cmd = String(command || '');
+  if (!cmd) return false;
+  if (/(?:^|[\s"'=`])\/Users\//.test(cmd) || cmd.includes('/Users/')) return true;
+
+  const roots = [
+    ROOT_DIR,
+    workspaceDir,
+    process.env.HOME ? path.join(process.env.HOME, 'AIUI') : '',
+    process.env.HOME ? path.join(process.env.HOME, 'aiui') : '',
+  ]
+    .filter(Boolean)
+    .map((p) => path.resolve(p));
+
+  for (const root of roots) {
+    if (root && cmd.includes(root)) return true;
+  }
+  return false;
+}
+
+/**
+ * Resolve the real execution target. Mac paths and the local Mac workspace
+ * never route over Spark SSH, even if the model/active target says dgx_spark.
+ */
+export function resolveExecutionTarget(command, requestedTarget, workspaceDir = process.cwd()) {
+  const raw = requestedTarget || 'local_mac';
+  const t =
+    raw === 'local' || raw === 'local_mac' || raw === 'local_client' ? 'local_mac' : raw;
+
+  if (t === 'container') return 'container';
+
+  if (commandImpliesLocalMac(command, workspaceDir)) {
+    return 'local_mac';
+  }
+
+  if (t === 'dgx_spark' && isLocalMacWorkspace(workspaceDir) && !commandImpliesSparkRemote(command)) {
+    return 'local_mac';
+  }
+
+  return t;
+}
+
+/** Test helper: true only when the command would still be treated as Spark remote. */
+export function isClassifiedAsSparkSshCommand(
+  command,
+  requestedTarget = 'dgx_spark',
+  workspaceDir = process.cwd(),
+) {
+  return resolveExecutionTarget(command, requestedTarget, workspaceDir) === 'dgx_spark';
 }
 
 function hostExecDenied(command, t0, target = 'local_mac') {
@@ -72,12 +165,13 @@ export function resolveVerificationGateCommand(rawGate) {
 /**
  * Execute a bash command via sandbox runner by default.
  * Host exec requires AIUI_ALLOW_HOST_EXEC=1. Native Spark still runs on the sandbox host.
+ * Mac-path / local-workspace commands are forced to local_mac (never Spark SSH).
  */
 export async function executeBashCommand(command, target = 'local', workspaceDir = process.cwd(), envId = 'web_session') {
   const t0 = performance.now();
-  const effectiveTarget = target === 'local' || target === 'local_mac' || target === 'local_client' ? 'local_mac' : target;
-  const isLocal = effectiveTarget === 'local_mac' || (!isRunningOnSpark() && target !== 'dgx_spark' && target !== 'container');
   const safeCmd = resolveVerificationGateCommand(command);
+  const effectiveTarget = resolveExecutionTarget(safeCmd, target, workspaceDir);
+  const isLocal = effectiveTarget === 'local_mac';
   const hostOk = allowHostExec();
 
   // Fast-path: explicit operator override for host exec
@@ -139,13 +233,14 @@ export async function executeBashCommand(command, target = 'local', workspaceDir
   }
 
   // 1. Try Runner HTTP API (default path for local clients)
+  // Local Mac work stays local_mac — never rewrite to dgx_spark.
   try {
     const res = await fetch(`${SANDBOX_RUNNER_URL}/api/sandbox/exec`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         cmd: safeCmd,
-        target: isLocal ? 'dgx_spark' : effectiveTarget,
+        target: effectiveTarget,
         envId,
         cwd: workspaceDir,
       }),
@@ -161,7 +256,7 @@ export async function executeBashCommand(command, target = 'local', workspaceDir
         stderr: json.stderr || '',
         exitCode: json.exitCode ?? 0,
         durationMs: Math.round(performance.now() - t0),
-        target: isLocal ? 'dgx_spark' : effectiveTarget,
+        target: effectiveTarget,
       };
     }
   } catch {
@@ -174,6 +269,17 @@ export async function executeBashCommand(command, target = 'local', workspaceDir
 
   // 2. Direct Fallback: SSH on Spark (Direct stdin stream — ZERO base64 pipeline)
   if (effectiveTarget === 'dgx_spark') {
+    if (sparkSshDownReason) {
+      return {
+        ok: false,
+        command: safeCmd,
+        stdout: '',
+        stderr: `Spark SSH is down (${SPARK_HOST}): ${sparkSshDownReason}. Not retrying SSH this turn.`,
+        exitCode: 255,
+        durationMs: Math.round(performance.now() - t0),
+        target: 'dgx_spark',
+      };
+    }
     try {
       const remoteScript = `mkdir -p ${JSON.stringify(workspaceDir)} && cd ${JSON.stringify(workspaceDir)} && ${safeCmd}`;
       const keyClean = SSH_KEY.replace(/^"|"$/g, '');
@@ -204,12 +310,18 @@ export async function executeBashCommand(command, target = 'local', workspaceDir
 
       const isSshConnError = res.exitCode !== 0 && /connect to host|connection refused|operation timed out|no route to host/i.test(res.stderr);
       if (isSshConnError) {
+        markSparkSshDown(res.stderr || 'Connection refused');
         if (!hostOk) {
           return {
-            ...hostExecDenied(safeCmd, t0),
+            ok: false,
+            command: safeCmd,
+            stdout: '',
             stderr:
               (res.stderr ? res.stderr + '\n' : '') +
-              'DGX Spark SSH unreachable; host fallback disabled (set AIUI_ALLOW_HOST_EXEC=1 to override).',
+              `Spark SSH is down (${SPARK_HOST}). Not retrying SSH this turn. Host fallback disabled (set AIUI_ALLOW_HOST_EXEC=1 to override).`,
+            exitCode: 255,
+            durationMs: Math.round(performance.now() - t0),
+            target: 'dgx_spark',
           };
         }
         try {
@@ -246,12 +358,24 @@ export async function executeBashCommand(command, target = 'local', workspaceDir
         target: 'dgx_spark',
       };
     } catch (err) {
+      const errMsg = err.message || String(err);
+      if (/connect to host|connection refused|operation timed out|no route to host/i.test(errMsg)) {
+        markSparkSshDown(errMsg);
+      }
       if (!hostOk) {
         return {
-          ...hostExecDenied(safeCmd, t0),
+          ok: false,
+          command: safeCmd,
+          stdout: '',
           stderr:
-            (err.message ? err.message + '\n' : '') +
-            'DGX Spark SSH failed; host fallback disabled (set AIUI_ALLOW_HOST_EXEC=1 to override).',
+            (errMsg ? errMsg + '\n' : '') +
+            (sparkSshDownReason
+              ? `Spark SSH is down (${SPARK_HOST}). Not retrying SSH this turn. `
+              : '') +
+            'Host fallback disabled (set AIUI_ALLOW_HOST_EXEC=1 to override).',
+          exitCode: 255,
+          durationMs: Math.round(performance.now() - t0),
+          target: 'dgx_spark',
         };
       }
       try {
@@ -311,7 +435,11 @@ export async function executeBashCommand(command, target = 'local', workspaceDir
  * Tool handler for bash
  */
 export async function runBashFromCtx(ctx = {}, command, target) {
-  const chosen = target || ctx.target || 'local_mac'
+  const chosen = resolveExecutionTarget(
+    command,
+    target || ctx.target || 'local_mac',
+    ctx.workspaceDir || process.cwd(),
+  );
   if (typeof ctx.runBash === 'function') return ctx.runBash(command, chosen)
   return executeBashCommand(command, chosen, ctx.workspaceDir || process.cwd(), ctx.envId || 'web_session')
 }
@@ -342,6 +470,20 @@ export async function sshToolHandler(args, ctx) {
   if (!cmd) return JSON.stringify({ ok: false, error: 'Command is required for ssh tool' });
 
   const t0 = performance.now();
+  const isDefaultSparkHost = host === SPARK_HOST;
+  if (isDefaultSparkHost && sparkSshDownReason) {
+    return JSON.stringify({
+      ok: false,
+      command: cmd,
+      host,
+      user,
+      port,
+      stdout: '',
+      stderr: `Spark SSH is down (${host}): ${sparkSshDownReason}. Not retrying SSH this turn.`,
+      exitCode: 255,
+      durationMs: Math.round(performance.now() - t0),
+    });
+  }
   try {
     const keyClean = SSH_KEY.replace(/^"|"$/g, '');
     const res = await new Promise((resolve, reject) => {
@@ -370,6 +512,13 @@ export async function sshToolHandler(args, ctx) {
       child.stdin.end();
     });
 
+    const isSshConnError =
+      res.exitCode !== 0 &&
+      /connect to host|connection refused|operation timed out|no route to host/i.test(res.stderr);
+    if (isDefaultSparkHost && isSshConnError) {
+      markSparkSshDown(res.stderr || 'Connection refused');
+    }
+
     return JSON.stringify({
       ok: res.exitCode === 0,
       command: cmd,
@@ -377,17 +526,23 @@ export async function sshToolHandler(args, ctx) {
       user,
       port,
       stdout: res.stdout,
-      stderr: res.stderr,
+      stderr: isSshConnError
+        ? `${res.stderr}\nSpark SSH is down (${host}). Not retrying SSH this turn.`
+        : res.stderr,
       exitCode: res.exitCode,
       durationMs: Math.round(performance.now() - t0),
     });
   } catch (err) {
+    const errMsg = err.message || String(err);
+    if (isDefaultSparkHost && /connect to host|connection refused|operation timed out|no route to host/i.test(errMsg)) {
+      markSparkSshDown(errMsg);
+    }
     return JSON.stringify({
       ok: false,
       command: cmd,
       host,
       user,
-      error: err.message,
+      error: errMsg,
       exitCode: 1,
       durationMs: Math.round(performance.now() - t0),
     });

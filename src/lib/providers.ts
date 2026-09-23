@@ -326,6 +326,11 @@ function browserDevPort(): string {
   return window.location?.port || '';
 }
 
+/** Vite dev (:5173–5175) and preview (:4173) — same-origin /vllm-* + /mempalace-bridge proxies. */
+export function isViteDevPort(port = browserDevPort()): boolean {
+  return port === '5173' || port === '5174' || port === '5175' || port === '4173';
+}
+
 export function normalizeSparkRoute(value: unknown): SparkRoute {
   if (value === 'lan' || value === 'tailscale' || value === 'both') return value;
   return 'both';
@@ -333,7 +338,7 @@ export function normalizeSparkRoute(value: unknown): SparkRoute {
 
 function urlsForSparkHost(host: string, port: number, useProxy: boolean): string[] {
   const urls: string[] = [];
-  const onVite = browserDevPort() === '5173' || browserDevPort() === '4173';
+  const onVite = isViteDevPort();
   // Same-origin prefixes are fixed in vite.config.ts, so they only apply to the baked hosts.
   if (useProxy && onVite && host === SPARK_DEFAULT_HOST) urls.push('/vllm-lan/v1');
   if (useProxy && onVite && host === SPARK_TAILSCALE_HOST) urls.push('/vllm-ts/v1');

@@ -4,6 +4,7 @@ import { tools } from '../aiui-agent/tools/registry.mjs'
 import { appendStep, createRun, readLatestRun, readRun, updateRun } from '../aiui-agent/core/run-record.mjs'
 import { handOffRun } from '../aiui-agent/transport/n8n-handoff.mjs'
 import { isBrowserRunsLocalRequest } from '../browser-runs/http.mjs'
+import { syncSessionBrowserCueFromText } from '../browser-runs/word-cues.mjs'
 
 function send(res, status, body) {
   res.statusCode = status
@@ -45,6 +46,7 @@ export async function handleAgentRunsRequest(req, res) {
     }
     if (req.method === 'POST' && route === '/api/agent-runs') {
       const body = await readBody(req)
+      syncSessionBrowserCueFromText(body.goal || '')
       send(res, 200, { ok: true, record: createRun({ goal: body.goal }) })
       return
     }

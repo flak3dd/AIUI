@@ -17,6 +17,494 @@ function encodeBase64Utf8(str: string): string {
   }
 }
 
+/** Short system-prompt rule: missing capability ⇒ acquire (incl. GitHub), never fake success / dead-end "I can't". */
+export const MISSING_TOOL_ACQUISITION_RULE =
+  'Missing-tool rule: If a turn needs a capability the registry does not have, you MUST call research_and_acquire_tool (or invoke the missing tool so JIT acquisition runs). Sourcing may search public GitHub, pin a commit SHA, and install into tools/acquired, then use the tool. Never invent a fake success and never stop with only "I can\'t" when acquisition is allowed. Refuse acquisition for signup, login, CAPTCHA solving, credential stuffing, malware, Reddit, or account creation.'
+
+/** Patterns that must never be acquired / synthesized (mirrors scripts/dynamic-tool-manager.mjs). */
+export const DISALLOWED_ACQUISITION_PATTERNS: Array<{ id: string; re: RegExp }> = [
+  { id: 'signup', re: /\b(sign[\s_-]?ups?|register(?:ation)?|create[\s_-]?accounts?|account[\s_-]?creat(?:e|ion))\b/i },
+  { id: 'login', re: /\b(log[\s_-]?ins?|sign[\s_-]?ins?|auth(?:enticat(?:e|ion))?[\s_-]?bypass)\b/i },
+  { id: 'captcha', re: /\b(captchas?|recaptcha|hcaptcha|turnstile[\s_-]?solv)\b/i },
+  {
+    id: 'credential_stuffing',
+    re: /\b(credential[\s_-]?stuff(?:ing|er)?|password[\s_-]?spray|brute[\s_-]?force[\s_-]?(login|auth|password)|combo[\s_-]?list)\b/i,
+  },
+  { id: 'malware', re: /\b(malware|ransomware|keylogger|trojan|rootkit|botnet|backdoor)\b/i },
+  { id: 'reddit', re: /\breddit\b/i },
+]
+
+export type AcquisitionPolicyResult =
+  | { allowed: true }
+  | { allowed: false; reason: string; ruleId: string }
+
+/** Pinned GitHub provenance stored on acquired tool meta / registry. */
+export interface GitHubToolPin {
+  type?: 'github'
+  fullName: string
+  repoUrl: string
+  cloneUrl: string
+  defaultBranch: string
+  commitSha: string
+}
+
+/**
+ * Refuse acquisition for signup / login / CAPTCHA / credential stuffing / malware / Reddit / account creation.
+ */
+export function assessAcquisitionPolicy(spec: Record<string, unknown> = {}): AcquisitionPolicyResult {
+  const blobs = [
+    spec.tool_name,
+    spec.name,
+    spec.capability_needed,
+    spec.capability,
+    spec.reason,
+    spec.description,
+    spec.query,
+    spec.suggested_implementation,
+    spec.full_name,
+    spec.fullName,
+    spec.repoUrl,
+    spec.cloneUrl,
+  ]
+    .filter(Boolean)
+    .map((v) => String(v))
+  const haystack = blobs.join('\n')
+  for (const rule of DISALLOWED_ACQUISITION_PATTERNS) {
+    if (rule.re.test(haystack)) {
+      return {
+        allowed: false,
+        reason: `Acquisition refused: disallowed capability (${rule.id}). Do not source tools for signup, login, CAPTCHA solving, credential stuffing, malware, Reddit, or account creation.`,
+        ruleId: rule.id,
+      }
+    }
+  }
+  return { allowed: true }
+}
+
+/** Build GitHub API headers. Uses GITHUB_TOKEN from env only when set; never logs the token. */
+export function githubApiHeaders(token?: string | null): Record<string, string> {
+  const headers: Record<string, string> = {
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'AIUI-dynamic-tool-manager',
+    'X-GitHub-Api-Version': '2022-11-28',
+  }
+  const t = token !== undefined && token !== null ? token : (typeof process !== 'undefined' ? process.env?.GITHUB_TOKEN : undefined)
+  if (t && String(t).trim()) {
+    headers.Authorization = `Bearer ${String(t).trim()}`
+  }
+  return headers
+}
+
+export type GitHubSearchResult =
+  | { ok: true; pin: GitHubToolPin; searchQuery: string; candidatesConsidered?: number }
+  | { ok: false; error: string; refused?: boolean; ruleId?: string }
+
+/**
+ * Search public GitHub repositories for a small matching tool.
+ * Primary entry point for GitHub sourcing. Inject fetchFn in tests — do not hit live API.
+ */
+export async function searchGitHubForTool(
+  capabilityQuery: string,
+  options: {
+    tool_name?: string
+    description?: string
+    fetchFn?: typeof fetch
+    token?: string | null
+    timeoutMs?: number
+    resolvePinFn?: (fullName: string, opts: Record<string, unknown>) => Promise<{ ok: boolean; pin?: GitHubToolPin; error?: string }>
+  } = {},
+): Promise<GitHubSearchResult> {
+  const query = String(capabilityQuery || '').trim()
+  if (!query) {
+    return { ok: false, error: 'capability query required for GitHub search' }
+  }
+
+  const policy = assessAcquisitionPolicy({
+    capability_needed: query,
+    tool_name: options.tool_name,
+    description: options.description,
+  })
+  if (!policy.allowed) {
+    return { ok: false, refused: true, error: policy.reason, ruleId: policy.ruleId }
+  }
+
+  const fetchFn = options.fetchFn || fetch
+  const token = options.token !== undefined ? options.token : (typeof process !== 'undefined' ? process.env?.GITHUB_TOKEN : undefined)
+  const headers = githubApiHeaders(token)
+  const q = encodeURIComponent(
+    `${query} in:name,description language:Python OR language:JavaScript OR language:TypeScript`,
+  )
+  const url = `https://api.github.com/search/repositories?q=${q}&sort=stars&order=desc&per_page=8`
+
+  let data: { items?: Array<Record<string, unknown>> }
+  try {
+    const res = await fetchFn(url, { headers, signal: AbortSignal.timeout(options.timeoutMs || 15000) })
+    if (!res.ok) {
+      return { ok: false, error: `GitHub search HTTP ${res.status}` }
+    }
+    data = (await res.json()) as { items?: Array<Record<string, unknown>> }
+  } catch (err) {
+    return { ok: false, error: `GitHub search failed: ${err instanceof Error ? err.message : String(err)}` }
+  }
+
+  const items = Array.isArray(data?.items) ? data.items : []
+  const resolvePin =
+    options.resolvePinFn ||
+    ((fullName: string, opts: Record<string, unknown>) =>
+      resolveGitHubPin(fullName, opts as Parameters<typeof resolveGitHubPin>[1]))
+
+  for (const item of items) {
+    const fullName = String(item.full_name || '')
+    const desc = String(item.description || '')
+    const repoPolicy = assessAcquisitionPolicy({
+      tool_name: fullName,
+      capability_needed: `${query}\n${desc}`,
+      description: desc,
+      full_name: fullName,
+      repoUrl: item.html_url,
+    })
+    if (!repoPolicy.allowed) continue
+    if (item.archived || item.disabled) continue
+    if (typeof item.size === 'number' && item.size > 80_000) continue
+
+    const pinRes = await resolvePin(fullName, {
+      fetchFn,
+      token,
+      repoHint: item,
+      timeoutMs: options.timeoutMs,
+    })
+    if (pinRes.ok && pinRes.pin) {
+      return {
+        ok: true,
+        pin: pinRes.pin,
+        searchQuery: query,
+        candidatesConsidered: items.length,
+      }
+    }
+  }
+
+  return { ok: false, error: `No suitable public GitHub repository found for: ${query}` }
+}
+
+/**
+ * Resolve default branch + commit SHA for owner/repo.
+ */
+export async function resolveGitHubPin(
+  fullName: string,
+  options: {
+    fetchFn?: typeof fetch
+    token?: string | null
+    repoHint?: Record<string, unknown>
+    timeoutMs?: number
+  } = {},
+): Promise<{ ok: true; pin: GitHubToolPin } | { ok: false; error: string }> {
+  const name = String(fullName || '').trim()
+  if (!/^[^/]+\/[^/]+$/.test(name)) {
+    return { ok: false, error: 'fullName must be owner/repo' }
+  }
+  const fetchFn = options.fetchFn || fetch
+  const token = options.token !== undefined ? options.token : (typeof process !== 'undefined' ? process.env?.GITHUB_TOKEN : undefined)
+  const headers = githubApiHeaders(token)
+  const hint = options.repoHint || {}
+
+  let defaultBranch = String(hint.default_branch || '')
+  let cloneUrl = String(hint.clone_url || `https://github.com/${name}.git`)
+  let repoUrl = String(hint.html_url || `https://github.com/${name}`)
+
+  try {
+    if (!defaultBranch) {
+      const repoRes = await fetchFn(`https://api.github.com/repos/${name}`, {
+        headers,
+        signal: AbortSignal.timeout(options.timeoutMs || 15000),
+      })
+      if (!repoRes.ok) {
+        return { ok: false, error: `GitHub repo lookup HTTP ${repoRes.status}` }
+      }
+      const repo = (await repoRes.json()) as Record<string, unknown>
+      defaultBranch = String(repo.default_branch || 'main')
+      cloneUrl = String(repo.clone_url || cloneUrl)
+      repoUrl = String(repo.html_url || repoUrl)
+    }
+
+    const commitRes = await fetchFn(
+      `https://api.github.com/repos/${name}/commits/${encodeURIComponent(defaultBranch)}`,
+      { headers, signal: AbortSignal.timeout(options.timeoutMs || 15000) },
+    )
+    if (!commitRes.ok) {
+      return { ok: false, error: `GitHub commit lookup HTTP ${commitRes.status}` }
+    }
+    const commit = (await commitRes.json()) as { sha?: string }
+    const commitSha = String(commit.sha || '').trim()
+    if (!/^[0-9a-f]{7,40}$/i.test(commitSha)) {
+      return { ok: false, error: 'GitHub commit SHA missing or invalid' }
+    }
+
+    return {
+      ok: true,
+      pin: {
+        type: 'github',
+        fullName: name,
+        repoUrl,
+        cloneUrl,
+        defaultBranch,
+        commitSha,
+      },
+    }
+  } catch (err) {
+    return { ok: false, error: `GitHub pin resolve failed: ${err instanceof Error ? err.message : String(err)}` }
+  }
+}
+
+export type InstallFromGitHubResult =
+  | {
+      ok: true
+      toolName: string
+      entrypoint: string
+      runtime: 'python3' | 'node'
+      pin: GitHubToolPin
+      message: string
+    }
+  | { ok: false; error: string; refused?: boolean; ruleId?: string }
+
+/**
+ * Install from a pinned GitHub commit into tools/acquired.
+ * Injectable for tests — production path proxies to the CLI dynamic-tool-manager.
+ */
+export async function installFromGitHubPin(
+  toolName: string,
+  pin: GitHubToolPin,
+  options: {
+    capability_needed?: string
+    fetchFn?: typeof fetch
+    token?: string | null
+    /** Test hook: skip network and record what would be installed */
+    installFn?: (toolName: string, pin: GitHubToolPin) => Promise<InstallFromGitHubResult>
+  } = {},
+): Promise<InstallFromGitHubResult> {
+  const policy = assessAcquisitionPolicy({
+    tool_name: toolName,
+    capability_needed: options.capability_needed || toolName,
+    description: pin.repoUrl,
+    full_name: pin.fullName,
+    repoUrl: pin.repoUrl,
+    cloneUrl: pin.cloneUrl,
+  })
+  if (!policy.allowed) {
+    return { ok: false, refused: true, error: policy.reason, ruleId: policy.ruleId }
+  }
+
+  if (options.installFn) {
+    return options.installFn(toolName, pin)
+  }
+
+  // Delegate to CLI manager via sandbox / subshell (same acquisition system)
+  const spec = {
+    tool_name: toolName,
+    capability_needed: options.capability_needed || toolName,
+    github_pin: pin,
+    prefer_github: true,
+  }
+  const raw = await researchAndAcquireTool(JSON.stringify(spec))
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    if (parsed.ok && parsed.pin) {
+      const p = parsed.pin as GitHubToolPin
+      registerToolInSession({
+        name: String(parsed.toolName || toolName),
+        description: String(parsed.message || ''),
+        parameters: {},
+        runtime: 'python3',
+        entrypoint: String(parsed.entrypoint || `tools/acquired/${toolName}`),
+        installedAt: Date.now(),
+        verified: true,
+        source: p,
+      })
+      return {
+        ok: true,
+        toolName: String(parsed.toolName || toolName),
+        entrypoint: String(parsed.entrypoint || ''),
+        runtime: 'python3',
+        pin: p,
+        message: String(parsed.message || ''),
+      }
+    }
+    return { ok: false, error: String(parsed.error || 'GitHub install failed') }
+  } catch {
+    return { ok: false, error: raw }
+  }
+}
+
+export interface EnsureToolAvailableOptions {
+  capability_needed?: string
+  capability?: string
+  reason?: string
+  description?: string
+  suggested_implementation?: string
+  parameters_spec?: Record<string, unknown>
+  /** Injected for tests — return true if tool is already present/verified. */
+  hasToolFn?: (name: string) => boolean
+  /** Injected for tests — perform the acquire. */
+  acquireFn?: (spec: Record<string, unknown>) => Promise<Record<string, unknown>>
+  /** Injected for tests — GitHub search entry point (no live API). */
+  searchGitHubFn?: (query: string, opts?: Record<string, unknown>) => Promise<GitHubSearchResult>
+  /** Injected for tests — install using returned clone URL + commit SHA. */
+  installFromGitHubFn?: (toolName: string, pin: GitHubToolPin) => Promise<InstallFromGitHubResult>
+}
+
+/**
+ * Ensure a tool is available: skip reinstall if present; otherwise search GitHub / acquire.
+ * Shared by CLI/web agents that use this manager.
+ */
+export async function ensureToolAvailable(
+  toolName: string,
+  options: EnsureToolAvailableOptions = {},
+): Promise<Record<string, unknown>> {
+  const rawName = String(toolName || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, '_')
+  if (!rawName) {
+    return { ok: false, error: 'tool_name is required' }
+  }
+
+  const capability =
+    options.capability_needed ||
+    options.capability ||
+    options.reason ||
+    `Missing registry tool: ${rawName}`
+
+  const policy = assessAcquisitionPolicy({
+    tool_name: rawName,
+    capability_needed: capability,
+    description: options.description,
+    suggested_implementation: options.suggested_implementation,
+  })
+  if (!policy.allowed) {
+    return { ok: false, refused: true, error: policy.reason, ruleId: policy.ruleId }
+  }
+
+  const hasToolFn =
+    options.hasToolFn ||
+    ((name: string) => {
+      const meta = dynamicToolsCache[name]
+      return Boolean(meta && meta.verified !== false && meta.enabled !== false)
+    })
+
+  if (hasToolFn(rawName)) {
+    const meta = dynamicToolsCache[rawName]
+    return {
+      ok: true,
+      alreadyInstalled: true,
+      toolName: rawName,
+      message: `Tool '${rawName}' is already installed; skipping reinstall.`,
+      definition: meta
+        ? {
+            type: 'function',
+            function: {
+              name: rawName,
+              description: meta.description,
+              parameters: meta.parameters,
+            },
+          }
+        : undefined,
+    }
+  }
+
+  // Prefer GitHub search → pin → install when hooks or default path requested
+  if (options.searchGitHubFn || options.installFromGitHubFn) {
+    const searchFn = options.searchGitHubFn || ((q: string) => searchGitHubForTool(q, { tool_name: rawName }))
+    const search = await searchFn(capability, { tool_name: rawName })
+    if (!search.ok) {
+      if (search.refused) {
+        return { ok: false, refused: true, error: search.error, ruleId: search.ruleId }
+      }
+      // Fall through to generic acquire if search misses
+    } else {
+      const installFn =
+        options.installFromGitHubFn ||
+        ((name: string, pin: GitHubToolPin) => installFromGitHubPin(name, pin, { capability_needed: capability }))
+      const installed = await installFn(rawName, search.pin)
+      if (installed.ok) {
+        registerToolInSession({
+          name: installed.toolName,
+          description: installed.message,
+          parameters: options.parameters_spec || {},
+          runtime: installed.runtime,
+          entrypoint: installed.entrypoint,
+          installedAt: Date.now(),
+          verified: true,
+          source: installed.pin,
+        })
+        return {
+          ok: true,
+          source: 'github',
+          toolName: installed.toolName,
+          entrypoint: installed.entrypoint,
+          pin: installed.pin,
+          message: installed.message,
+        }
+      }
+      if (installed.refused) {
+        return { ok: false, refused: true, error: installed.error, ruleId: installed.ruleId }
+      }
+    }
+  }
+
+  const acquireFn =
+    options.acquireFn ||
+    (async (spec: Record<string, unknown>) => {
+      const raw = await researchAndAcquireTool(JSON.stringify(spec))
+      try {
+        return JSON.parse(raw) as Record<string, unknown>
+      } catch {
+        return { ok: false, error: raw }
+      }
+    })
+
+  return await acquireFn({
+    tool_name: rawName,
+    capability_needed: capability,
+    parameters_spec: options.parameters_spec,
+    suggested_implementation: options.suggested_implementation,
+  })
+}
+
+/**
+ * JIT path for an unknown tool call: acquire then execute (or refuse disallowed).
+ */
+export async function autoAcquireMissingTool(
+  toolName: string,
+  argsJson: string,
+  options: EnsureToolAvailableOptions = {},
+): Promise<Record<string, unknown>> {
+  const ensure = await ensureToolAvailable(toolName, {
+    ...options,
+    capability_needed:
+      options.capability_needed || `Automatically synthesized tool for ${toolName}`,
+  })
+  if (!ensure.ok) {
+    return {
+      ok: false,
+      refused: Boolean(ensure.refused),
+      error: ensure.error || `Could not acquire missing tool: ${toolName}`,
+      ruleId: ensure.ruleId,
+    }
+  }
+  if (options.acquireFn && !options.hasToolFn) {
+    // Test-only path without execute
+    return { ...ensure, jitAcquired: !ensure.alreadyInstalled }
+  }
+  const executionResult = await executeDynamicTool(toolName, argsJson)
+  return {
+    ok: true,
+    jitAcquired: !ensure.alreadyInstalled,
+    alreadyInstalled: Boolean(ensure.alreadyInstalled),
+    toolName,
+    definition: ensure.definition,
+    executionResult,
+  }
+}
+
 export interface DynamicToolMeta {
   name: string
   description: string
@@ -28,6 +516,8 @@ export interface DynamicToolMeta {
   verified: boolean
   enabled?: boolean
   usageCount?: number
+  /** Provenance when sourced from GitHub (repo URL + pinned commit SHA). */
+  source?: GitHubToolPin
 }
 
 export interface DynamicToolRegistry {
@@ -390,7 +880,7 @@ export const TOOL_ACQUISITION_META_TOOLS = [
     function: {
       name: 'research_and_acquire_tool',
       description:
-        'Autonomously research, download, test, and hot-load a new tool into your architecture mid-response. Use whenever you lack a tool (e.g. sqlite_query, web_search_duckduckgo, git_blame_inspector, csv_stats_analyzer, or any custom tool). Once acquired, you can immediately invoke it in your next action.',
+        'Autonomously research, download, test, and hot-load a new tool into tools/acquired mid-response. REQUIRED whenever you lack a capability — never claim success without the tool and never dead-end with only "I can\'t". Refuses signup/login/CAPTCHA/credential stuffing/malware/Reddit/account creation. Once acquired, invoke it immediately.',
       parameters: {
         type: 'object',
         properties: {
@@ -781,6 +1271,39 @@ export async function researchAndAcquireTool(specJson: string): Promise<string> 
     parsedSpec = typeof specJson === 'string' ? JSON.parse(specJson) : specJson || {}
   } catch {
     parsedSpec = {}
+  }
+
+  const policy = assessAcquisitionPolicy(parsedSpec)
+  if (!policy.allowed) {
+    return JSON.stringify({
+      ok: false,
+      refused: true,
+      error: policy.reason,
+      ruleId: policy.ruleId,
+    })
+  }
+
+  // Present-tool short-circuit: do not reinstall if already in session cache
+  const existingName = String(parsedSpec.tool_name || parsedSpec.name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, '_')
+  if (existingName && dynamicToolsCache[existingName]?.verified) {
+    const meta = dynamicToolsCache[existingName]
+    return JSON.stringify({
+      ok: true,
+      alreadyInstalled: true,
+      toolName: existingName,
+      message: `Tool '${existingName}' is already installed; skipping reinstall.`,
+      definition: {
+        type: 'function',
+        function: {
+          name: existingName,
+          description: meta.description,
+          parameters: meta.parameters,
+        },
+      },
+    })
   }
 
   // 1. Fast-path HTTP

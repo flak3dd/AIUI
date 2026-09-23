@@ -315,3 +315,228 @@ test('http_probe_advanced executes via raw curl bypass and returns structured HT
   assert.ok(res.method === 'raw_curl_verified' || res.ok !== undefined)
 })
 
+test('ensureToolAvailable — missing tool name triggers the acquire path', async () => {
+  const { ensureToolAvailable } = await import('./dynamicToolManager.ts')
+  let acquireCalls = 0
+  const res = await ensureToolAvailable('jit_csv_pivot_helper', {
+    capability_needed: 'Pivot CSV rows into summary columns',
+    hasToolFn: () => false,
+    acquireFn: async (spec) => {
+      acquireCalls += 1
+      assert.equal(spec.tool_name, 'jit_csv_pivot_helper')
+      return {
+        ok: true,
+        status: 'installed_and_verified',
+        toolName: 'jit_csv_pivot_helper',
+        message: 'acquired',
+      }
+    },
+  })
+  assert.equal(res.ok, true)
+  assert.equal(acquireCalls, 1)
+  assert.equal(res.alreadyInstalled, undefined)
+  assert.equal(res.toolName, 'jit_csv_pivot_helper')
+})
+
+test('ensureToolAvailable — present tool does not reinstall', async () => {
+  const { ensureToolAvailable } = await import('./dynamicToolManager.ts')
+  let acquireCalls = 0
+  const res = await ensureToolAvailable('sqlite_query', {
+    capability_needed: 'Run SQL',
+    hasToolFn: (name) => name === 'sqlite_query',
+    acquireFn: async () => {
+      acquireCalls += 1
+      return { ok: true, toolName: 'sqlite_query' }
+    },
+  })
+  assert.equal(res.ok, true)
+  assert.equal(res.alreadyInstalled, true)
+  assert.equal(acquireCalls, 0)
+  assert.match(String(res.message || ''), /skipping reinstall|already installed/i)
+})
+
+test('ensureToolAvailable — disallowed signup/captcha capability is refused', async () => {
+  const { ensureToolAvailable, assessAcquisitionPolicy } = await import('./dynamicToolManager.ts')
+
+  const signupPolicy = assessAcquisitionPolicy({
+    tool_name: 'account_bootstrapper',
+    capability_needed: 'Automate signup forms and create accounts',
+  })
+  assert.equal(signupPolicy.allowed, false)
+  if (!signupPolicy.allowed) {
+    assert.equal(signupPolicy.ruleId, 'signup')
+  }
+
+  let acquireCalls = 0
+  const captchaRes = await ensureToolAvailable('captcha_solver_bot', {
+    capability_needed: 'Solve CAPTCHA challenges on login pages',
+    hasToolFn: () => false,
+    acquireFn: async () => {
+      acquireCalls += 1
+      return { ok: true, toolName: 'captcha_solver_bot' }
+    },
+  })
+  assert.equal(captchaRes.ok, false)
+  assert.equal(captchaRes.refused, true)
+  assert.equal(acquireCalls, 0)
+  assert.match(String(captchaRes.error || ''), /refused|captcha|disallowed/i)
+
+  const loginRes = await ensureToolAvailable('credential_stuffer', {
+    capability_needed: 'credential stuffing against auth endpoints',
+    hasToolFn: () => false,
+    acquireFn: async () => {
+      acquireCalls += 1
+      return { ok: true }
+    },
+  })
+  assert.equal(loginRes.ok, false)
+  assert.equal(loginRes.refused, true)
+  assert.equal(acquireCalls, 0)
+})
+
+test('ensureToolAvailable — missing tool triggers GitHub search and installs pin', async () => {
+  const { ensureToolAvailable } = await import('./dynamicToolManager.ts')
+  let searchCalls = 0
+  let installCalls = 0
+  const pin = {
+    type: 'github' as const,
+    fullName: 'example/csv-pivot-cli',
+    repoUrl: 'https://github.com/example/csv-pivot-cli',
+    cloneUrl: 'https://github.com/example/csv-pivot-cli.git',
+    defaultBranch: 'main',
+    commitSha: 'abc123def4567890abc123def4567890abc123de',
+  }
+  const res = await ensureToolAvailable('csv_pivot_cli', {
+    capability_needed: 'Pivot CSV rows into summary columns',
+    hasToolFn: () => false,
+    searchGitHubFn: async (query) => {
+      searchCalls += 1
+      assert.match(query, /Pivot CSV/i)
+      return { ok: true, pin, searchQuery: query }
+    },
+    installFromGitHubFn: async (toolName, receivedPin) => {
+      installCalls += 1
+      assert.equal(toolName, 'csv_pivot_cli')
+      assert.equal(receivedPin.cloneUrl, pin.cloneUrl)
+      assert.equal(receivedPin.commitSha, pin.commitSha)
+      assert.equal(receivedPin.repoUrl, pin.repoUrl)
+      assert.equal(receivedPin.defaultBranch, 'main')
+      return {
+        ok: true,
+        toolName,
+        entrypoint: `tools/acquired/${toolName}/main.py`,
+        runtime: 'python3' as const,
+        pin: { ...receivedPin, type: 'github' as const },
+        message: `Installed ${receivedPin.fullName}@${receivedPin.commitSha}`,
+      }
+    },
+  })
+  assert.equal(searchCalls, 1)
+  assert.equal(installCalls, 1)
+  assert.equal(res.ok, true)
+  assert.equal(res.source, 'github')
+  assert.equal((res.pin as { commitSha?: string })?.commitSha, pin.commitSha)
+  assert.equal((res.pin as { cloneUrl?: string })?.cloneUrl, pin.cloneUrl)
+})
+
+test('ensureToolAvailable — present tool does not search GitHub', async () => {
+  const { ensureToolAvailable } = await import('./dynamicToolManager.ts')
+  let searchCalls = 0
+  let installCalls = 0
+  const res = await ensureToolAvailable('sqlite_query', {
+    capability_needed: 'Run SQL',
+    hasToolFn: (name) => name === 'sqlite_query',
+    searchGitHubFn: async () => {
+      searchCalls += 1
+      return { ok: false, error: 'should not search' }
+    },
+    installFromGitHubFn: async () => {
+      installCalls += 1
+      return { ok: false, error: 'should not install' }
+    },
+  })
+  assert.equal(res.ok, true)
+  assert.equal(res.alreadyInstalled, true)
+  assert.equal(searchCalls, 0)
+  assert.equal(installCalls, 0)
+})
+
+test('ensureToolAvailable — disallowed capability does not search GitHub', async () => {
+  const { ensureToolAvailable } = await import('./dynamicToolManager.ts')
+  let searchCalls = 0
+  let installCalls = 0
+  const res = await ensureToolAvailable('captcha_solver_bot', {
+    capability_needed: 'Solve CAPTCHA challenges on signup pages',
+    hasToolFn: () => false,
+    searchGitHubFn: async () => {
+      searchCalls += 1
+      return { ok: false, error: 'should not search' }
+    },
+    installFromGitHubFn: async () => {
+      installCalls += 1
+      return { ok: false, error: 'should not install' }
+    },
+  })
+  assert.equal(res.ok, false)
+  assert.equal(res.refused, true)
+  assert.equal(searchCalls, 0)
+  assert.equal(installCalls, 0)
+})
+
+test('searchGitHubForTool — uses mocked fetch and returns pin with clone URL + SHA', async () => {
+  const { searchGitHubForTool } = await import('./dynamicToolManager.ts')
+  const urls: string[] = []
+  const fetchFn = async (input: RequestInfo | URL) => {
+    const url = String(input)
+    urls.push(url)
+    if (url.includes('/search/repositories')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          items: [
+            {
+              full_name: 'acme/json-diff-tool',
+              description: 'Small CLI to diff JSON documents',
+              html_url: 'https://github.com/acme/json-diff-tool',
+              clone_url: 'https://github.com/acme/json-diff-tool.git',
+              default_branch: 'main',
+              size: 120,
+              archived: false,
+            },
+          ],
+        }),
+      } as Response
+    }
+    if (url.includes('/commits/')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ sha: 'deadbeefcafebabe000000000000000000000001' }),
+      } as Response
+    }
+    return { ok: false, status: 404, json: async () => ({}) } as Response
+  }
+  const res = await searchGitHubForTool('json diff cli tool', {
+    fetchFn: fetchFn as typeof fetch,
+    token: null,
+  })
+  assert.equal(res.ok, true)
+  if (res.ok) {
+    assert.equal(res.pin.fullName, 'acme/json-diff-tool')
+    assert.equal(res.pin.cloneUrl, 'https://github.com/acme/json-diff-tool.git')
+    assert.equal(res.pin.commitSha, 'deadbeefcafebabe000000000000000000000001')
+    assert.equal(res.pin.defaultBranch, 'main')
+  }
+  assert.ok(urls.some((u) => u.includes('api.github.com/search/repositories')))
+  assert.ok(!urls.some((u) => /token|Bearer/i.test(u)))
+})
+
+test('MISSING_TOOL_ACQUISITION_RULE is exported for system prompts', async () => {
+  const { MISSING_TOOL_ACQUISITION_RULE } = await import('./dynamicToolManager.ts')
+  assert.match(MISSING_TOOL_ACQUISITION_RULE, /research_and_acquire_tool/)
+  assert.match(MISSING_TOOL_ACQUISITION_RULE, /tools\/acquired/)
+  assert.match(MISSING_TOOL_ACQUISITION_RULE, /GitHub/)
+  assert.match(MISSING_TOOL_ACQUISITION_RULE, /CAPTCHA|captcha/i)
+})
+

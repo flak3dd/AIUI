@@ -12,24 +12,36 @@ const sessions = new Map()
 /** Cap concurrent Playwright Chromium processes (one per Work browser window). */
 export const MAX_BROWSER_SESSIONS = 4
 
-function readAllowlist() {
+function readAllowlistConfig() {
   try {
     const parsed = JSON.parse(fs.readFileSync(ALLOWLIST_PATH, 'utf8'))
-    return Array.isArray(parsed.origins) ? parsed.origins : []
+    return {
+      mode: parsed.mode === 'all' ? 'all' : 'list',
+      origins: Array.isArray(parsed.origins) ? parsed.origins : [],
+    }
   } catch {
-    return ['http://127.0.0.1:5173', 'http://localhost:5173']
+    return {
+      mode: 'list',
+      origins: ['http://127.0.0.1:5173', 'http://localhost:5173'],
+    }
   }
 }
 
+export function getAllowlistConfig() {
+  return readAllowlistConfig()
+}
+
 export function listAllowlist() {
-  return readAllowlist()
+  return readAllowlistConfig().origins
 }
 
 export function addAllowlistOrigin(origin) {
   const clean = originOf(origin.endsWith('/') ? origin : `${origin}/`)
-  const origins = [...new Set([...readAllowlist(), clean])]
+  const config = readAllowlistConfig()
+  const origins = [...new Set([...config.origins, clean])]
+  const payload = config.mode === 'all' ? { mode: 'all', origins } : { origins }
   fs.mkdirSync(path.dirname(ALLOWLIST_PATH), { recursive: true })
-  fs.writeFileSync(ALLOWLIST_PATH, JSON.stringify({ origins }, null, 2))
+  fs.writeFileSync(ALLOWLIST_PATH, JSON.stringify(payload, null, 2))
   return origins
 }
 
@@ -132,7 +144,7 @@ export async function closeSession(sessionId) {
 }
 
 export async function openSession({ url, operatorStarted = false, headless = false }) {
-  if (!isOriginAllowlisted(url, readAllowlist(), { operatorStarted })) {
+  if (!isOriginAllowlisted(url, readAllowlistConfig(), { operatorStarted })) {
     return {
       ok: false,
       exitCode: 1,

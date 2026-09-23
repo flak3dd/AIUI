@@ -25,7 +25,7 @@ import {
   browserTypeHandler,
   browserConsoleLogsHandler,
 } from './handlers/browser.mjs';
-import { runNaturalLanguageCommand } from '../../browser-runs/nl-command.mjs';
+import { runNaturalLanguageCommand, hasWordCue, isSessionBrowserCueActive } from '../../browser-runs/nl-command.mjs';
 import { webUnblockerHandler } from './handlers/unblocker.mjs';
 import { spawnSubagentHandler } from '../core/subagent.mjs';
 import { handOffRun } from '../transport/n8n-handoff.mjs';
@@ -62,6 +62,32 @@ export async function executeTool(name, argsJson, ctx = {}) {
 
   if (ctx.logVerbose) {
     ctx.logVerbose(`Calling tool ${name}`, args);
+  }
+
+  const BROWSER_TOOL_NAMES = new Set([
+    'nl_automate',
+    'browser_open',
+    'browser_screenshot',
+    'browser_click',
+    'browser_type',
+    'browser_console_logs',
+    'browser_text',
+    'browser_select',
+    'browser_close',
+  ]);
+  if (BROWSER_TOOL_NAMES.has(name)) {
+    const goal = typeof ctx.activeGoal === 'string' ? ctx.activeGoal : '';
+    const cueOk =
+      ctx.browserCueActive === true ||
+      hasWordCue(goal, 'automate') ||
+      isSessionBrowserCueActive();
+    if (!cueOk) {
+      return JSON.stringify({
+        ok: false,
+        error:
+          'Browser tools require the word cue "automate" in the user prompt. Without that cue, headed browser automation will not start.',
+      });
+    }
   }
 
   // Core execution tools
@@ -260,7 +286,7 @@ export async function executeTool(name, argsJson, ctx = {}) {
     return await dynamicToolManager.executeTool(name, argsJson);
   }
 
-  // JIT Unknown Tool Auto-Synthesis Fallback
+  // JIT Unknown Tool Auto-Synthesis Fallback — missing tool must trigger acquisition, not a dead-end
   try {
     if (ctx.log && ctx.skin) {
       ctx.log(`  ${rgb(...ctx.skin.warning)}⚡ JIT Tool Discovery Triggered for '${name}'...${c.reset}`);
@@ -285,11 +311,23 @@ export async function executeTool(name, argsJson, ctx = {}) {
       }
       return jitRes.executionResult;
     }
+    return JSON.stringify(
+      {
+        ok: false,
+        refused: Boolean(jitRes.refused),
+        error: jitRes.error || `Could not acquire missing tool: ${name}`,
+        ruleId: jitRes.ruleId,
+      },
+      null,
+      2,
+    );
   } catch (jitErr) {
     if (ctx.logVerbose) {
       ctx.logVerbose('JIT Synthesis failed', jitErr.message);
     }
+    return JSON.stringify({
+      ok: false,
+      error: `Missing tool '${name}' and acquisition failed: ${jitErr.message || jitErr}`,
+    });
   }
-
-  return JSON.stringify({ ok: false, error: `Unknown tool: ${name}` });
 }

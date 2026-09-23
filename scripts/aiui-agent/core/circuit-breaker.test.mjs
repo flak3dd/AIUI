@@ -1,8 +1,31 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { CircuitBreakerManager, canonicalFetchUrl } from './circuit-breaker.mjs';
+import { isClassifiedAsSparkSshCommand } from '../tools/handlers/bash.mjs';
 
 const PAGE = 'https://pay.ddmmzf.com/x_mgr/start/index.html';
+
+describe('local Mac path bash routing', () => {
+  it('does not classify /Users/adminuser/AIUI commands as Spark SSH', () => {
+    const cmd = 'find /Users/adminuser/AIUI -name "*allowlist*"';
+    assert.equal(
+      isClassifiedAsSparkSshCommand(cmd, 'dgx_spark', '/Users/adminuser/AIUI'),
+      false,
+    );
+    assert.equal(
+      isClassifiedAsSparkSshCommand('ls /Users/adminuser/AIUI', 'dgx_spark', '/Users/adminuser/AIUI'),
+      false,
+    );
+    assert.equal(
+      isClassifiedAsSparkSshCommand(
+        'grep -rn allowlist /Users/adminuser/AIUI',
+        'dgx_spark',
+        '/Users/adminuser/AIUI',
+      ),
+      false,
+    );
+  });
+});
 
 describe('cross-tool page fetch breaker', () => {
   it('treats hash routes on the same document as one page', () => {

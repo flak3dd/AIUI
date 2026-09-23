@@ -1,5 +1,7 @@
 import { isRunningOnSpark, loadOptimizerPolicy } from '../config.mjs';
 import { superpowersDirective } from './superpowers-catalog.mjs';
+import { WORD_CUE_SYSTEM_RULE } from '../../browser-runs/word-cues.mjs';
+import { MISSING_TOOL_ACQUISITION_RULE } from '../../dynamic-tool-manager.mjs';
 
 // ==========================================
 // 🧠 System Prompt Engine & Integration Architecture
@@ -86,7 +88,7 @@ Rules & Directives:
      • Git Forensics -> 'git_blame_inspector'.
      • HTTP & Endpoint Verification -> Raw 'bash' with 'curl' or 'http_get_json'.
      • Vulnerability & CVEs -> 'cve_lookup'.
-   - If a capability deficit is detected, proactively call 'research_and_acquire_tool' to synthesize and hot-load the tool into your architecture.
+   - ${MISSING_TOOL_ACQUISITION_RULE}
 12. Strategic Plan Fidelity & Milestone Realization: When an active Strategic Execution Plan is present in your working memory, you must execute the active step directly. Do not skip verification exit gates or declare completion while milestones remain unfulfilled. If a milestone is complete, immediately advance to the next step.
 13. Proof-of-Work Invariant & Completion Criteria:
    - Operational Code Tasks: If code was written or files were modified, you are strictly forbidden from declaring a task finished merely by stating that code has been written. You must provide concrete execution evidence:
@@ -103,17 +105,25 @@ Rules & Directives:
     Never blind-patch: editing without those lines in context causes patch failures and redo loops.
     On tool error / empty target / patch reject: re-inspect that path before writing again.
     New files: create allowed without a prior read; if the path already exists, inspect first.
-    After edits: scoped verify (touched files/symbols only) before claiming done.`;
+    After edits: scoped verify (touched files/symbols only) before claiming done.
+15. ${WORD_CUE_SYSTEM_RULE}`;
   }
 
   /**
    * Layer 2: Environment & Cluster Manifest
    */
   getEnvironmentManifest() {
+    const target = this.agent.target;
+    const hostLabel = isRunningOnSpark()
+      ? 'Native DGX Spark Linux Host'
+      : target === 'dgx_spark'
+        ? 'Remote DGX Spark (SSH/sandbox) — Mac paths under /Users and the local workspace still run on local_mac'
+        : 'Local Mac host (filesystem tools stay local; do not SSH for /Users or workspace paths)';
     return `\n\n=== CLUSTER & WORKSPACE MANIFEST ===
-Active Execution Target: ${this.agent.target} (${isRunningOnSpark() ? 'Native DGX Spark Linux Host' : 'Remote DGX Spark GPU cluster'})
+Active Execution Target: ${target} (${hostLabel})
 Active Workspace Directory: ${this.agent.workspaceDir}
-Environment ID: ${this.agent.envId}`;
+Environment ID: ${this.agent.envId}
+Routing: Commands that reference /Users/... or this workspace MUST use target local_mac. Never SSH those to Spark.`;
   }
 
   /**

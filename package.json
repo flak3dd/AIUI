@@ -29,7 +29,7 @@
     "build": "tsc -b && vite build",
     "matrix": "bash ./scripts/matrix.sh",
     "lint": "oxlint",
-    "test": "node --test src/lib/contextCompactor.test.ts src/lib/commandSpaceEngine.test.ts src/lib/chatResponseOptimizer.test.ts src/lib/goalVerification.test.ts src/lib/dynamicToolManager.test.ts src/lib/sandboxEnvEnforcement.test.ts src/lib/autonomyEnhancements.test.ts src/lib/providers.spark.test.ts src/lib/thinkingOptions.test.ts src/lib/palaceOrchestrator.test.ts scripts/browser-runs/proof.test.mjs scripts/aiui-agent/tools/http-get-json.test.mjs",
+    "test": "node --test src/lib/contextCompactor.test.ts src/lib/commandSpaceEngine.test.ts src/lib/chatResponseOptimizer.test.ts src/lib/goalVerification.test.ts src/lib/dynamicToolManager.test.ts src/lib/sandboxEnvEnforcement.test.ts src/lib/autonomyEnhancements.test.ts src/lib/providers.spark.test.ts src/lib/thinkingOptions.test.ts src/lib/palaceOrchestrator.test.ts scripts/browser-runs/proof.test.mjs scripts/browser-runs/nl-command.test.mjs scripts/aiui-agent/tools/http-get-json.test.mjs",
     "browser:proof": "node --input-type=module -e \"import { runBlueprintProof } from './scripts/browser-runs/supervisor.mjs'; const r = await runBlueprintProof(); console.log(JSON.stringify(r.record || r, null, 2)); process.exit(r.ok ? 0 : 1)\"",
     "preview": "vite preview",
     "stack": "bash ./start-stack.sh",

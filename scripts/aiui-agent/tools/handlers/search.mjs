@@ -12,10 +12,20 @@ import { resolveFlexibleFilePath } from '../../core/workflow-optimizer.mjs';
 
 /**
  * Resolves path in workspace or sandbox.
+ * Absolute Mac/host paths are kept intact so local repo search works.
  */
 function resolvePath(rawPath, ctx = {}) {
   let cleanPath = String(rawPath || '').trim();
   if (!cleanPath) return null;
+
+  // Absolute host paths: never strip via sandbox normalization
+  if (path.isAbsolute(cleanPath) && !cleanPath.startsWith('/tmp/spark-sandboxes')) {
+    if (fs.existsSync(cleanPath)) return cleanPath;
+    const flexible = resolveFlexibleFilePath(cleanPath, ctx.workspaceDir || process.cwd());
+    if (flexible && fs.existsSync(flexible)) return flexible;
+    return cleanPath;
+  }
+
   if (ctx.envId) {
     cleanPath = normalizeSandboxPath(cleanPath, ctx.envId);
   }

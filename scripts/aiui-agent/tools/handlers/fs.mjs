@@ -10,7 +10,7 @@ import {
   normalizeSandboxPath,
 } from '../../config.mjs';
 import { resolveFlexibleFilePath } from '../../core/workflow-optimizer.mjs';
-import { runBashFromCtx } from './bash.mjs';
+import { runBashFromCtx, resolveExecutionTarget } from './bash.mjs';
 
 // In-memory read file cache (20s TTL)
 export const fileReadCache = new Map();
@@ -36,7 +36,11 @@ export async function writeFileHandler(args, ctx) {
   fileReadCache.clear();
   const rawPath = String(args.path || args.filename || '').trim();
   const content = String(args.content ?? '');
-  const target = args.target || ctx.target;
+  const target = resolveExecutionTarget(
+    rawPath,
+    args.target || ctx.target,
+    ctx.workspaceDir || process.cwd(),
+  );
   if (!rawPath) return JSON.stringify({ ok: false, error: 'Path required' });
 
   const normalized = normalizeSandboxPath(rawPath, ctx.envId);
@@ -153,7 +157,11 @@ export async function writeFileHandler(args, ctx) {
  */
 export async function readFileHandler(args, ctx) {
   const rawPath = String(args.path || args.filename || '').trim();
-  const target = args.target || ctx.target;
+  const target = resolveExecutionTarget(
+    rawPath,
+    args.target || ctx.target,
+    ctx.workspaceDir || process.cwd(),
+  );
   if (!rawPath) return JSON.stringify({ ok: false, error: 'Path required' });
 
   const startLine = Math.max(1, parseInt(args.start_line || args.startLine, 10) || 1);

@@ -20,6 +20,15 @@ import {
 import { MemoryPalace, searchMemory, checkpointMemory } from './mempalace.ts'
 import { getAllScaffolds, getScaffoldFiles } from './scaffoldTemplates.ts'
 import { formatAIUIResponse } from './devinResponseFormatter.ts'
+import { isTurnBrowserCueActive, WORD_CUE_SYSTEM_RULE } from './wordCues.ts'
+import {
+  MISSING_TOOL_ACQUISITION_RULE,
+  autoAcquireMissingTool,
+  executeDynamicTool,
+  loadDynamicToolRegistry,
+  researchAndAcquireTool,
+  registerToolInSession,
+} from './dynamicToolManager.ts'
 
 /** Reject host escapes and path traversal before any sandbox I/O. */
 function sandboxPathError(filePath: string): string | null {
@@ -389,6 +398,16 @@ export async function runTool(
     args = argsJson ? JSON.parse(argsJson) : {}
   } catch {
     return JSON.stringify({ ok: false, error: 'Invalid tool arguments JSON' })
+  }
+
+  if (name.startsWith('browser_') || name === 'nl_automate') {
+    if (!isTurnBrowserCueActive()) {
+      return JSON.stringify({
+        ok: false,
+        error:
+          'Browser tools require the word cue "automate" in the user prompt. Without that cue, headed browser automation will not start.',
+      })
+    }
   }
 
   if (name.startsWith('browser_')) {
@@ -777,6 +796,33 @@ export async function runTool(
     })
   }
 
+  // Dynamic tool manager — same acquisition path as CLI agent
+  if (name === 'research_and_acquire_tool') {
+    return await researchAndAcquireTool(argsJson)
+  }
+  if (name === 'list_acquired_tools') {
+    const reg = await loadDynamicToolRegistry()
+    const tools = Object.values(reg)
+    return JSON.stringify({ ok: true, count: tools.length, tools }, null, 2)
+  }
+  if (name === 'remove_acquired_tool') {
+    const toolName = String(args.tool_name || '').trim()
+    if (!toolName) {
+      return JSON.stringify({ ok: false, error: 'tool_name is required' })
+    }
+    const reg = await loadDynamicToolRegistry()
+    if (reg[toolName]) {
+      delete reg[toolName]
+      return JSON.stringify({ ok: true, message: `Tool '${toolName}' removed from session cache.` })
+    }
+    return JSON.stringify({ ok: false, error: `Tool '${toolName}' not found in registry.` })
+  }
+
+  const registry = await loadDynamicToolRegistry()
+  if (registry[name]?.verified) {
+    return await executeDynamicTool(name, argsJson)
+  }
+
   try {
     const res = await fetch('/api/agent-runs/tool', {
       method: 'POST',
@@ -787,11 +833,46 @@ export async function runTool(
     try {
       const parsed = JSON.parse(text)
       if (parsed && typeof parsed === 'object' && !('ok' in parsed)) parsed.ok = res.ok
+      // Known server tool succeeded (or returned a structured refusal) — do not JIT-acquire
+      if (res.ok || parsed?.ok === true || parsed?.refused === true) {
+        return JSON.stringify(parsed)
+      }
+      // Unknown / failed server tool → try acquisition instead of dead-end
+      if (
+        typeof parsed?.error === 'string' &&
+        /unknown tool|not found|not (a )?registered/i.test(parsed.error)
+      ) {
+        const jit = await autoAcquireMissingTool(name, argsJson)
+        if (jit.ok && typeof jit.executionResult === 'string') {
+          if (jit.definition && (jit.definition as { function?: { name?: string } }).function?.name) {
+            const fn = (jit.definition as { function: { name: string; description?: string; parameters?: Record<string, unknown> } }).function
+            registerToolInSession({
+              name: fn.name,
+              description: fn.description || '',
+              parameters: fn.parameters || {},
+              runtime: 'python3',
+              entrypoint: `tools/acquired/${fn.name}.py`,
+              installedAt: Date.now(),
+              verified: true,
+            })
+          }
+          return jit.executionResult
+        }
+        return JSON.stringify(jit)
+      }
       return JSON.stringify(parsed)
     } catch {
       return JSON.stringify({ ok: false, error: text.slice(0, 300) || `Tool ${name} failed` })
     }
   } catch (err) {
+    // Network/API miss → acquire rather than "I can't"
+    const jit = await autoAcquireMissingTool(name, argsJson)
+    if (jit.ok && typeof jit.executionResult === 'string') {
+      return jit.executionResult
+    }
+    if (jit.refused || jit.error) {
+      return JSON.stringify(jit)
+    }
     return JSON.stringify({ ok: false, error: err instanceof Error ? err.message : `Unknown tool: ${name}` })
   }
 }
@@ -966,8 +1047,8 @@ If the user asks you to run or change something and Agent Mode is off, explain t
 
 export const AGENT_SYSTEM = `You are Abliterated AI in Agent Mode — an autonomous systems engineer with live tools.
 
-Tools: bash, write_file, read_file, replace_file_content, multi_replace_file_content, grep_search, get_file_outline, start_daemon, read_daemon_logs, stop_daemon, list_daemons, nl_automate, browser_open, browser_screenshot, browser_click, browser_type, browser_console_logs, spawn_subagent, hand_off_run, list_models, http_get_json, now, memory_search, memory_checkpoint, spawn_linux_container, destroy_linux_container, list_linux_containers, list_scaffolds, apply_scaffold, set_workspace_dir, get_workspace_dir, ssh, base64.
-Use nl_automate for a plain-language browser task on the local studio, such as opening Settings or reading the Health list.
+Tools: bash, write_file, read_file, replace_file_content, multi_replace_file_content, grep_search, get_file_outline, start_daemon, read_daemon_logs, stop_daemon, list_daemons, nl_automate, browser_open, browser_screenshot, browser_click, browser_type, browser_console_logs, spawn_subagent, hand_off_run, list_models, http_get_json, now, memory_search, memory_checkpoint, spawn_linux_container, destroy_linux_container, list_linux_containers, list_scaffolds, apply_scaffold, set_workspace_dir, get_workspace_dir, ssh, base64, research_and_acquire_tool.
+Use nl_automate for a plain-language browser task on the local studio, such as opening Settings or reading the Health list — but only when the user said the word cue "automate".
 Prefer native tool_calls. Only use <run>command</run> or fenced bash when tools are unavailable.
 Never fabricate stdout/stderr — only trust real tool results.
 
@@ -983,6 +1064,8 @@ Rules & Output Directives:
 6. Memory: memory_search before guessing past project context; checkpoint meaningful outcomes.
 7. When done: return a compact dotpoint summary: what changed, evidence (exit codes, paths), and status.
 8. Before browser_open, state the full URL. Unattended opens only succeed for origins on the allowlist.
+9. ${WORD_CUE_SYSTEM_RULE}
+10. ${MISSING_TOOL_ACQUISITION_RULE}
 
 Containers (optional): profiles python_data | gpu_spark | minimal_alpine; destroy when finished.`
 

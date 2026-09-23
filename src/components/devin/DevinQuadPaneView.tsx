@@ -52,6 +52,7 @@ export interface DevinWorkspaceViewProps {
     terminalVisible: boolean;
     toggleTerminal: () => void;
     newBrowser: () => void;
+    attachBrowserSession?: (meta: { sessionId?: string; url?: string }) => void;
     browserCount: number;
     browserCap: number;
     browserWindows: WorkBrowserWindowMeta[];
@@ -340,6 +341,23 @@ export const DevinQuadPaneView: React.FC<DevinWorkspaceViewProps> = ({
     );
   }, []);
 
+  const attachBrowserSession = useCallback((meta: { sessionId?: string; url?: string }) => {
+    setBrowserWindows((prev) => {
+      if (!prev.length) {
+        return [{ ...createBrowserWindow(1), sessionId: meta.sessionId, url: meta.url }];
+      }
+      const [first, ...rest] = prev;
+      return [
+        {
+          ...first,
+          sessionId: meta.sessionId ?? first.sessionId,
+          url: meta.url ?? first.url,
+        },
+        ...rest,
+      ];
+    });
+  }, []);
+
   useEffect(() => {
     if (!onWorkChrome) return;
     onWorkChrome({
@@ -353,6 +371,7 @@ export const DevinQuadPaneView: React.FC<DevinWorkspaceViewProps> = ({
       terminalVisible,
       toggleTerminal,
       newBrowser: addBrowserWindow,
+      attachBrowserSession,
       browserCount: browserWindows.length,
       browserCap: MAX_BROWSER_WINDOWS,
       browserWindows,
@@ -371,6 +390,7 @@ export const DevinQuadPaneView: React.FC<DevinWorkspaceViewProps> = ({
     terminalVisible,
     toggleTerminal,
     addBrowserWindow,
+    attachBrowserSession,
     browserWindows,
     browserCapHit,
   ]);

@@ -22,7 +22,7 @@ import {
 import { dynamicToolManager } from '../../dynamic-tool-manager.mjs';
 import { AGENT_TOOLS } from '../tools/registry.mjs';
 import { executeTool } from '../tools/executor.mjs';
-import { executeBashCommand } from '../tools/handlers/bash.mjs';
+import { executeBashCommand, resetSparkSshCircuit } from '../tools/handlers/bash.mjs';
 import { preparePalaceContext, reflectPalaceDraft, consolidateDurableTurn } from '../../../src/lib/palaceOrchestrator.ts';
 import processManager from './process-manager.mjs';
 import { browserOpenHandler } from '../tools/handlers/browser.mjs';
@@ -35,6 +35,7 @@ import { PlanEngine, ExecutionPlan, isAdvisoryPrompt } from './planner.mjs';
 import { saveWorkflowState, isGitRepo, initGitRepo } from './workflow-optimizer.mjs';
 import { callLlm } from '../transport/llm-client.mjs';
 import { checkServices, runOptimizationPass, sendCliDebugEvent, getRecentCliTraffic } from '../transport/telemetry.mjs';
+import { maybeRunAutomateCue, hasWordCue } from '../../browser-runs/nl-command.mjs';
 import {
   CLI_SKINS,
   getSkin,
@@ -247,6 +248,7 @@ export class AiuiAgent {
     this.abortRequested = false;
     this.interjectionQueue = [];
     this.activeTurnAbortController = new AbortController();
+    resetSparkSshCircuit();
 
     try {
       if (/^(continue|resume)$/i.test(String(goal || '').trim())) {
@@ -255,7 +257,32 @@ export class AiuiAgent {
         if (resumed) goal = resumed
       }
       this.activeGoal = goal;
+      this.browserCueActive = hasWordCue(goal, 'automate');
       this.runRecord = createRun({ goal })
+
+      // Code wins: "automate" cue must start headed browser automation even if the model ignores the prompt.
+      if (this.browserCueActive) {
+        try {
+          const cueRun = await maybeRunAutomateCue(goal);
+          this.lastAutomateCueResult = cueRun;
+          if (cueRun.triggered && cueRun.started) {
+            this.log(
+              `\n${rgb(...this.skin.success)}▶ Word cue "automate": headed Playwright Chromium started${c.reset}` +
+                (cueRun.sessionId ? ` (${cueRun.sessionId})` : '') +
+                '\n',
+            );
+          } else if (cueRun.triggered && !cueRun.ok) {
+            this.log(
+              `\n${rgb(...this.skin.warning)}▶ Word cue "automate": ${cueRun.error || 'browser task refused'}${c.reset}\n`,
+            );
+          }
+        } catch (cueErr) {
+          this.lastAutomateCueResult = { triggered: true, started: false, ok: false, error: cueErr.message };
+          this.log(`\n${rgb(...this.skin.danger)}▶ Word cue "automate" failed: ${cueErr.message}${c.reset}\n`);
+        }
+      } else {
+        this.lastAutomateCueResult = { triggered: false, started: false };
+      }
       const terminalWidth = getResponsiveWidth(84, 98);
       const rawGoalLines = typeof goal === 'string' ? goal.split(/\r?\n/) : [String(goal)];
       const isMultiLineGoal = rawGoalLines.length > 1;
@@ -339,6 +366,14 @@ export class AiuiAgent {
         }
       } catch {
         palaceTurn = null;
+      }
+      if (this.lastAutomateCueResult?.triggered) {
+        const cue = this.lastAutomateCueResult;
+        turnMessages[0].content += `\n\n[WORD CUE ENFORCEMENT — automate]\n${
+          cue.started
+            ? `Headed Playwright Chromium already started (sessionId=${cue.sessionId || 'n/a'}). Continue the browser task with nl_automate / browser_* tools; do not only describe it.`
+            : `Automate cue was present but the browser task did not start: ${cue.error || 'unknown error'}. Do not claim the page was opened.`
+        }\nHTTP 200 alone is not proof. Origins must stay allowlisted.`;
       }
       let loopSteeringDirectives = [];
       let contextContinuations = 0;

@@ -112,6 +112,12 @@ export const DEFAULT_ENV_ID = 'web_session';
 
 export function normalizeSandboxPath(rawPath, envId = DEFAULT_ENV_ID) {
   let p = String(rawPath || '').trim();
+  if (!p) return p;
+  // Absolute host paths (e.g. /Users/.../AIUI) must stay absolute — stripping
+  // the leading slash made local grep/read resolve under the wrong tree.
+  if (p.startsWith('/') && !p.startsWith('/tmp/spark-sandboxes')) {
+    return p;
+  }
   p = p.replace(/^\/+/, '');
   if (p.startsWith(`tmp/spark-sandboxes/${envId}/`)) {
     p = p.slice(`tmp/spark-sandboxes/${envId}/`.length);

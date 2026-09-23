@@ -3,11 +3,12 @@ import path from 'node:path'
 import {
   addAllowlistOrigin,
   dispatchBrowserTool,
-  listAllowlist,
+  getAllowlistConfig,
   readLatestRecord,
   readRecordById,
   runBlueprintProof,
 } from './supervisor.mjs'
+import { detectWordCues, hasWordCue, maybeRunAutomateCue, WORD_CUE_SYSTEM_RULE, syncSessionBrowserCueFromText } from './nl-command.mjs'
 
 function send(res, status, body) {
   res.statusCode = status
@@ -96,7 +97,8 @@ export async function handleBrowserRunsRequest(req, res) {
       return
     }
     if (req.method === 'GET' && route === '/api/browser-runs/allowlist') {
-      send(res, 200, { ok: true, origins: listAllowlist() })
+      const config = getAllowlistConfig()
+      send(res, 200, { ok: true, mode: config.mode, origins: config.origins })
       return
     }
     if (req.method === 'POST' && route === '/api/browser-runs/allowlist') {
@@ -114,6 +116,25 @@ export async function handleBrowserRunsRequest(req, res) {
       const args = typeof body.arguments === 'string' ? JSON.parse(body.arguments) : (body.arguments || {})
       const result = await dispatchBrowserTool(body.name, args)
       send(res, 200, result)
+      return
+    }
+    if (req.method === 'POST' && route === '/api/browser-runs/cue') {
+      const body = await readBody(req)
+      const text = String(body.text || body.goal || body.prompt || '')
+      syncSessionBrowserCueFromText(text)
+      const cues = detectWordCues(text)
+      if (!hasWordCue(text, 'automate')) {
+        send(res, 200, {
+          ok: true,
+          triggered: false,
+          started: false,
+          cues,
+          rule: WORD_CUE_SYSTEM_RULE,
+        })
+        return
+      }
+      const result = await maybeRunAutomateCue(text)
+      send(res, 200, { ...result, rule: WORD_CUE_SYSTEM_RULE })
       return
     }
     send(res, 404, { ok: false, error: `Unknown browser-runs route: ${route}` })

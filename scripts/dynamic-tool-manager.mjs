@@ -14,6 +14,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -23,10 +24,419 @@ const ROOT_DIR = path.resolve(__dirname, '..');
 const TOOLS_DIR = path.resolve(ROOT_DIR, 'tools');
 const ACQUIRED_DIR = path.resolve(TOOLS_DIR, 'acquired');
 const REGISTRY_FILE = path.resolve(TOOLS_DIR, 'registry.json');
+const SANDBOX_RUNNER_URL = process.env.SANDBOX_RUNNER_URL || 'http://127.0.0.1:17330';
 
 // Ensure base directories exist
 if (!fs.existsSync(TOOLS_DIR)) fs.mkdirSync(TOOLS_DIR, { recursive: true });
 if (!fs.existsSync(ACQUIRED_DIR)) fs.mkdirSync(ACQUIRED_DIR, { recursive: true });
+
+/** Short system-prompt rule: missing capability ⇒ acquire (incl. GitHub), never fake success / dead-end "I can't". */
+export const MISSING_TOOL_ACQUISITION_RULE =
+  'Missing-tool rule: If a turn needs a capability the registry does not have, you MUST call research_and_acquire_tool (or invoke the missing tool so JIT acquisition runs). Sourcing may search public GitHub, pin a commit SHA, and install into tools/acquired, then use the tool. Never invent a fake success and never stop with only "I can\'t" when acquisition is allowed. Refuse acquisition for signup, login, CAPTCHA solving, credential stuffing, malware, Reddit, or account creation.';
+
+/** Patterns that must never be acquired / synthesized. */
+export const DISALLOWED_ACQUISITION_PATTERNS = [
+  { id: 'signup', re: /\b(sign[\s_-]?ups?|register(?:ation)?|create[\s_-]?accounts?|account[\s_-]?creat(?:e|ion))\b/i },
+  { id: 'login', re: /\b(log[\s_-]?ins?|sign[\s_-]?ins?|auth(?:enticat(?:e|ion))?[\s_-]?bypass)\b/i },
+  { id: 'captcha', re: /\b(captchas?|recaptcha|hcaptcha|turnstile[\s_-]?solv)\b/i },
+  { id: 'credential_stuffing', re: /\b(credential[\s_-]?stuff(?:ing|er)?|password[\s_-]?spray|brute[\s_-]?force[\s_-]?(login|auth|password)|combo[\s_-]?list)\b/i },
+  { id: 'malware', re: /\b(malware|ransomware|keylogger|trojan|rootkit|botnet|backdoor)\b/i },
+  { id: 'reddit', re: /\breddit\b/i },
+];
+
+function allowHostExec() {
+  return process.env.AIUI_ALLOW_HOST_EXEC === '1';
+}
+
+function isRunningOnSparkHost() {
+  if (process.platform === 'darwin') return false;
+  if (process.platform === 'linux') {
+    const h = (os.hostname() || '').toLowerCase();
+    return h.includes('spark') || h.includes('dgx') || h.includes('gx10');
+  }
+  return false;
+}
+
+/**
+ * Refuse acquisition for signup / login / CAPTCHA / credential stuffing / malware / Reddit / account creation.
+ */
+export function assessAcquisitionPolicy(spec = {}) {
+  const blobs = [
+    spec.tool_name,
+    spec.name,
+    spec.capability_needed,
+    spec.capability,
+    spec.reason,
+    spec.description,
+    spec.query,
+    spec.suggested_implementation,
+    spec.full_name,
+    spec.repoUrl,
+    spec.cloneUrl,
+  ]
+    .filter(Boolean)
+    .map((v) => String(v));
+  const haystack = blobs.join('\n');
+  for (const rule of DISALLOWED_ACQUISITION_PATTERNS) {
+    if (rule.re.test(haystack)) {
+      return {
+        allowed: false,
+        reason: `Acquisition refused: disallowed capability (${rule.id}). Do not source tools for signup, login, CAPTCHA solving, credential stuffing, malware, Reddit, or account creation.`,
+        ruleId: rule.id,
+      };
+    }
+  }
+  return { allowed: true };
+}
+
+/** Build GitHub API headers. Uses GITHUB_TOKEN from env only when set; never logs the token. */
+export function githubApiHeaders(token = process.env.GITHUB_TOKEN) {
+  const headers = {
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'AIUI-dynamic-tool-manager',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+  if (token && String(token).trim()) {
+    headers.Authorization = `Bearer ${String(token).trim()}`;
+  }
+  return headers;
+}
+
+/**
+ * Search public GitHub repositories for a small matching tool.
+ * Entry point for GitHub sourcing. Injectable fetchFn for unit tests (no live API).
+ */
+export async function searchGitHubForTool(capabilityQuery, options = {}) {
+  const query = String(capabilityQuery || '').trim();
+  if (!query) {
+    return { ok: false, error: 'capability query required for GitHub search' };
+  }
+
+  const policy = assessAcquisitionPolicy({
+    capability_needed: query,
+    tool_name: options.tool_name,
+    description: options.description,
+  });
+  if (!policy.allowed) {
+    return { ok: false, refused: true, error: policy.reason, ruleId: policy.ruleId };
+  }
+
+  const fetchFn = options.fetchFn || fetch;
+  const token = options.token !== undefined ? options.token : process.env.GITHUB_TOKEN;
+  const headers = githubApiHeaders(token);
+  const q = encodeURIComponent(`${query} in:name,description language:Python OR language:JavaScript OR language:TypeScript`);
+  const url = `https://api.github.com/search/repositories?q=${q}&sort=stars&order=desc&per_page=8`;
+
+  let data;
+  try {
+    const res = await fetchFn(url, { headers, signal: AbortSignal.timeout(options.timeoutMs || 15000) });
+    if (!res.ok) {
+      return { ok: false, error: `GitHub search HTTP ${res.status}` };
+    }
+    data = await res.json();
+  } catch (err) {
+    return { ok: false, error: `GitHub search failed: ${err?.message || err}` };
+  }
+
+  const items = Array.isArray(data?.items) ? data.items : [];
+  for (const item of items) {
+    const fullName = String(item.full_name || '');
+    const desc = String(item.description || '');
+    const repoPolicy = assessAcquisitionPolicy({
+      tool_name: fullName,
+      capability_needed: `${query}\n${desc}`,
+      description: desc,
+      full_name: fullName,
+      repoUrl: item.html_url,
+    });
+    if (!repoPolicy.allowed) {
+      continue; // skip disallowed repos; do not clone
+    }
+    if (item.archived || item.disabled) continue;
+    // Prefer small tools (skip huge monorepos)
+    if (typeof item.size === 'number' && item.size > 80_000) continue;
+
+    const pin = await resolveGitHubPin(fullName, {
+      fetchFn,
+      token,
+      repoHint: item,
+      timeoutMs: options.timeoutMs,
+    });
+    if (pin.ok) {
+      return {
+        ok: true,
+        pin: pin.pin,
+        searchQuery: query,
+        candidatesConsidered: items.length,
+      };
+    }
+  }
+
+  return { ok: false, error: `No suitable public GitHub repository found for: ${query}` };
+}
+
+/**
+ * Resolve default branch + commit SHA for a repo (the pin we actually fetch).
+ */
+export async function resolveGitHubPin(fullName, options = {}) {
+  const name = String(fullName || '').trim();
+  if (!/^[^/]+\/[^/]+$/.test(name)) {
+    return { ok: false, error: 'fullName must be owner/repo' };
+  }
+  const fetchFn = options.fetchFn || fetch;
+  const token = options.token !== undefined ? options.token : process.env.GITHUB_TOKEN;
+  const headers = githubApiHeaders(token);
+  const hint = options.repoHint || {};
+
+  let defaultBranch = hint.default_branch || '';
+  let cloneUrl = hint.clone_url || `https://github.com/${name}.git`;
+  let repoUrl = hint.html_url || `https://github.com/${name}`;
+
+  try {
+    if (!defaultBranch) {
+      const repoRes = await fetchFn(`https://api.github.com/repos/${name}`, {
+        headers,
+        signal: AbortSignal.timeout(options.timeoutMs || 15000),
+      });
+      if (!repoRes.ok) {
+        return { ok: false, error: `GitHub repo lookup HTTP ${repoRes.status}` };
+      }
+      const repo = await repoRes.json();
+      defaultBranch = repo.default_branch || 'main';
+      cloneUrl = repo.clone_url || cloneUrl;
+      repoUrl = repo.html_url || repoUrl;
+    }
+
+    const commitRes = await fetchFn(
+      `https://api.github.com/repos/${name}/commits/${encodeURIComponent(defaultBranch)}`,
+      { headers, signal: AbortSignal.timeout(options.timeoutMs || 15000) },
+    );
+    if (!commitRes.ok) {
+      return { ok: false, error: `GitHub commit lookup HTTP ${commitRes.status}` };
+    }
+    const commit = await commitRes.json();
+    const commitSha = String(commit.sha || '').trim();
+    if (!/^[0-9a-f]{7,40}$/i.test(commitSha)) {
+      return { ok: false, error: 'GitHub commit SHA missing or invalid' };
+    }
+
+    return {
+      ok: true,
+      pin: {
+        fullName: name,
+        repoUrl,
+        cloneUrl,
+        defaultBranch,
+        commitSha,
+      },
+    };
+  } catch (err) {
+    return { ok: false, error: `GitHub pin resolve failed: ${err?.message || err}` };
+  }
+}
+
+/**
+ * Install a pinned GitHub commit into tools/acquired (tarball extract; no postinstall scripts).
+ * Prefers sandbox tar via runAcquiredProcess; does not weaken AIUI_ALLOW_HOST_EXEC.
+ */
+export async function installFromGitHubPin(toolName, pin, options = {}) {
+  const rawName = String(toolName || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, '_');
+  if (!rawName) {
+    return { ok: false, error: 'tool_name is required' };
+  }
+  if (!pin?.cloneUrl || !pin?.commitSha || !pin?.fullName) {
+    return { ok: false, error: 'pin requires fullName, cloneUrl, and commitSha' };
+  }
+
+  const policy = assessAcquisitionPolicy({
+    tool_name: rawName,
+    capability_needed: options.capability_needed || rawName,
+    description: pin.repoUrl,
+    full_name: pin.fullName,
+    repoUrl: pin.repoUrl,
+    cloneUrl: pin.cloneUrl,
+  });
+  if (!policy.allowed) {
+    return { ok: false, refused: true, error: policy.reason, ruleId: policy.ruleId };
+  }
+
+  const fetchFn = options.fetchFn || fetch;
+  const token = options.token !== undefined ? options.token : process.env.GITHUB_TOKEN;
+  const headers = githubApiHeaders(token);
+  // Prefer Accept that yields the archive; never log token
+  headers.Accept = 'application/vnd.github+json';
+
+  const destDir = path.join(options.acquiredDir || ACQUIRED_DIR, rawName);
+  const tarballUrl =
+    options.tarballUrl ||
+    `https://api.github.com/repos/${pin.fullName}/tarball/${pin.commitSha}`;
+
+  let archiveBuf;
+  try {
+    const res = await fetchFn(tarballUrl, {
+      headers,
+      signal: AbortSignal.timeout(options.timeoutMs || 60000),
+      redirect: 'follow',
+    });
+    if (!res.ok) {
+      return { ok: false, error: `GitHub tarball HTTP ${res.status}` };
+    }
+    archiveBuf = Buffer.from(await res.arrayBuffer());
+  } catch (err) {
+    return { ok: false, error: `GitHub tarball download failed: ${err?.message || err}` };
+  }
+
+  if (fs.existsSync(destDir)) {
+    fs.rmSync(destDir, { recursive: true, force: true });
+  }
+  fs.mkdirSync(destDir, { recursive: true });
+
+  const tmpTar = path.join(
+    os.tmpdir(),
+    `aiui-gh-${rawName}-${pin.commitSha.slice(0, 8)}.tar.gz`,
+  );
+  fs.writeFileSync(tmpTar, archiveBuf);
+
+  // Extract with tar (sandbox preferred via runAcquiredProcess). No npm/pip postinstall.
+  const extract = await runAcquiredProcess(
+    'tar',
+    ['-xzf', tmpTar, '-C', destDir, '--strip-components=1'],
+    { timeoutMs: 60000, cwd: ROOT_DIR },
+  );
+  try {
+    fs.unlinkSync(tmpTar);
+  } catch {
+    // ignore
+  }
+  if (!extract.ok) {
+    return {
+      ok: false,
+      error: `Failed to extract GitHub tarball: ${extract.stderr || 'tar failed'}`,
+      via: extract.via,
+    };
+  }
+
+  const entry = pickAcquiredEntrypoint(destDir, rawName);
+  if (!entry) {
+    return { ok: false, error: `No runnable entrypoint found in ${pin.fullName}@${pin.commitSha}` };
+  }
+
+  const relEntrypoint = path.relative(ROOT_DIR, entry.absPath);
+  return {
+    ok: true,
+    toolName: rawName,
+    entrypoint: relEntrypoint,
+    runtime: entry.runtime,
+    pin: {
+      type: 'github',
+      repoUrl: pin.repoUrl,
+      cloneUrl: pin.cloneUrl,
+      defaultBranch: pin.defaultBranch,
+      commitSha: pin.commitSha,
+      fullName: pin.fullName,
+    },
+    message: `Installed ${pin.fullName}@${pin.commitSha} into tools/acquired/${rawName}`,
+  };
+}
+
+/** Pick a small runnable entry file from an extracted GitHub tree. */
+function pickAcquiredEntrypoint(destDir, toolName) {
+  const candidates = [
+    `${toolName}.py`,
+    `${toolName}.mjs`,
+    `${toolName}.js`,
+    'main.py',
+    'cli.py',
+    'tool.py',
+    '__main__.py',
+    'index.mjs',
+    'index.js',
+    'cli.mjs',
+    'cli.js',
+  ];
+  for (const rel of candidates) {
+    const abs = path.join(destDir, rel);
+    if (fs.existsSync(abs) && fs.statSync(abs).isFile()) {
+      return {
+        absPath: abs,
+        runtime: rel.endsWith('.py') ? 'python3' : 'node',
+      };
+    }
+  }
+  // Shallow scan for a single top-level script
+  try {
+    const files = fs.readdirSync(destDir).filter((f) => /\.(py|mjs|js)$/i.test(f));
+    if (files.length === 1) {
+      const abs = path.join(destDir, files[0]);
+      return {
+        absPath: abs,
+        runtime: files[0].endsWith('.py') ? 'python3' : 'node',
+      };
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+/**
+ * Prefer sandbox runner for process execution. Host spawn only when
+ * AIUI_ALLOW_HOST_EXEC=1 or running natively on Spark (same gate as bash).
+ */
+async function runAcquiredProcess(executable, cmdArgs, { timeoutMs = 30000, cwd = ROOT_DIR } = {}) {
+  const shellCmd = [executable, ...cmdArgs.map((a) => (/\s/.test(String(a)) ? JSON.stringify(String(a)) : String(a)))].join(' ');
+
+  // 1. Prefer sandbox runner
+  try {
+    const res = await fetch(`${SANDBOX_RUNNER_URL}/api/sandbox/exec`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        cmd: shellCmd,
+        target: 'dgx_spark',
+        envId: 'dynamic_tool',
+        cwd,
+      }),
+      signal: AbortSignal.timeout(Math.min(timeoutMs + 5000, 90000)),
+    });
+    if (res.ok) {
+      const json = await res.json();
+      return {
+        ok: (json.exitCode ?? 1) === 0,
+        status: json.exitCode ?? 1,
+        stdout: json.stdout || '',
+        stderr: json.stderr || '',
+        via: 'sandbox',
+      };
+    }
+  } catch {
+    // sandbox offline
+  }
+
+  // 2. Host exec only behind existing gate (or native Spark)
+  if (!allowHostExec() && !isRunningOnSparkHost()) {
+    return {
+      ok: false,
+      status: 1,
+      stdout: '',
+      stderr:
+        'Host execution is disabled by default. Set AIUI_ALLOW_HOST_EXEC=1 to override, or use the sandbox runner.',
+      via: 'denied',
+    };
+  }
+
+  const proc = spawnSync(executable, cmdArgs, { encoding: 'utf8', timeout: timeoutMs, cwd });
+  return {
+    ok: proc.status === 0,
+    status: proc.status ?? 1,
+    stdout: proc.stdout || '',
+    stderr: proc.stderr || '',
+    via: 'host',
+  };
+}
 
 // ------------------------------------------------------------------------------
 // 1. Curated Tool Blueprints (Instant High-Assurance Synthesis)
@@ -905,83 +1315,131 @@ export class DynamicToolManager {
   }
 
   /**
-   * Pre-flight sandbox smoke test for candidate tool.
+   * Pre-flight smoke test for candidate tool (sandbox preferred; host gated).
    */
-  smokeTestTool(entrypoint, runtime, testArgs) {
+  async smokeTestTool(entrypoint, runtime, testArgs) {
     const absPath = path.resolve(ROOT_DIR, entrypoint);
     if (!fs.existsSync(absPath)) {
       return { ok: false, error: `Tool entrypoint file not found: ${absPath}` };
     }
 
-    const cmdArgs = [];
-    if (runtime === 'python3') {
-      cmdArgs.push(absPath);
-      for (const [k, v] of Object.entries(testArgs || {})) {
-        const flag = `--${k.replace(/_/g, '-')}`;
-        if (typeof v === 'boolean') {
-          if (v) cmdArgs.push(flag);
-        } else {
-          cmdArgs.push(flag, String(v));
-        }
+    const cmdArgs = [absPath];
+    for (const [k, v] of Object.entries(testArgs || {})) {
+      const flag = `--${k.replace(/_/g, '-')}`;
+      if (typeof v === 'boolean') {
+        if (v) cmdArgs.push(flag);
+      } else {
+        cmdArgs.push(flag, String(v));
       }
-      const res = spawnSync('python3', cmdArgs, { encoding: 'utf8', timeout: 15000 });
-      let parsed = null;
-      try { parsed = JSON.parse(res.stdout); } catch {}
-      return {
-        ok: res.status === 0 && (parsed ? parsed.ok !== false : true),
-        exitCode: res.status,
-        stdout: res.stdout,
-        stderr: res.stderr,
-        parsed,
-        error: res.status !== 0 ? res.stderr || 'Smoke test failed' : undefined,
-      };
-    } else {
-      cmdArgs.push(absPath);
-      for (const [k, v] of Object.entries(testArgs || {})) {
-        const flag = `--${k.replace(/_/g, '-')}`;
-        if (typeof v === 'boolean') {
-          if (v) cmdArgs.push(flag);
-        } else {
-          cmdArgs.push(flag, String(v));
-        }
-      }
-      const res = spawnSync('node', cmdArgs, { encoding: 'utf8', timeout: 15000 });
-      let parsed = null;
-      try { parsed = JSON.parse(res.stdout); } catch {}
-      return {
-        ok: res.status === 0 && (parsed ? parsed.ok !== false : true),
-        exitCode: res.status,
-        stdout: res.stdout,
-        stderr: res.stderr,
-        parsed,
-        error: res.status !== 0 ? res.stderr || 'Smoke test failed' : undefined,
-      };
     }
+    const executable = runtime === 'node' ? 'node' : 'python3';
+    const res = await runAcquiredProcess(executable, cmdArgs, { timeoutMs: 15000 });
+    let parsed = null;
+    try {
+      parsed = JSON.parse(res.stdout);
+    } catch {
+      // not json
+    }
+    return {
+      ok: res.ok && (parsed ? parsed.ok !== false : true),
+      exitCode: res.status,
+      stdout: res.stdout,
+      stderr: res.stderr,
+      parsed,
+      via: res.via,
+      error: !res.ok ? res.stderr || 'Smoke test failed' : undefined,
+    };
   }
 
   /**
-   * Installs tool dependencies using pip or npm.
+   * Installs tool dependencies using pip or npm (sandbox preferred; host gated).
    */
-  installDependencies(deps = [], runtime = 'python3') {
+  async installDependencies(deps = [], runtime = 'python3') {
     if (!deps || deps.length === 0) return { ok: true };
     for (const dep of deps) {
       if (runtime === 'python3') {
-        const res = spawnSync('pip3', ['install', dep], { encoding: 'utf8', timeout: 60000 });
-        if (res.status !== 0) {
+        const res = await runAcquiredProcess('pip3', ['install', dep], { timeoutMs: 60000 });
+        if (!res.ok) {
           return { ok: false, error: `pip3 install ${dep} failed: ${res.stderr}` };
         }
       } else {
-        const res = spawnSync('npm', ['install', '--no-save', dep], {
-          encoding: 'utf8',
-          cwd: ROOT_DIR,
-          timeout: 60000,
-        });
-        if (res.status !== 0) {
+        const res = await runAcquiredProcess(
+          'npm',
+          ['install', '--no-save', dep],
+          { timeoutMs: 60000, cwd: ROOT_DIR },
+        );
+        if (!res.ok) {
           return { ok: false, error: `npm install ${dep} failed: ${res.stderr}` };
         }
       }
     }
     return { ok: true };
+  }
+
+  /**
+   * Ensure a tool is present: skip reinstall if verified; otherwise acquire.
+   * Inject acquireFn / hasToolFn for unit tests.
+   */
+  async ensureToolAvailable(toolName, options = {}) {
+    const rawName = String(toolName || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_]/g, '_');
+    if (!rawName) {
+      return { ok: false, error: 'tool_name is required' };
+    }
+
+    const capability =
+      options.capability_needed ||
+      options.capability ||
+      options.reason ||
+      `Missing registry tool: ${rawName}`;
+
+    const policy = assessAcquisitionPolicy({
+      tool_name: rawName,
+      capability_needed: capability,
+      description: options.description,
+      suggested_implementation: options.suggested_implementation,
+    });
+    if (!policy.allowed) {
+      return { ok: false, refused: true, error: policy.reason, ruleId: policy.ruleId };
+    }
+
+    const hasToolFn =
+      options.hasToolFn ||
+      ((name) => Boolean(this.registry.tools?.[name] && this.registry.tools[name].verified));
+
+    if (hasToolFn(rawName)) {
+      const meta = this.registry.tools?.[rawName];
+      return {
+        ok: true,
+        alreadyInstalled: true,
+        toolName: rawName,
+        message: `Tool '${rawName}' is already installed; skipping reinstall.`,
+        definition: meta
+          ? {
+              type: 'function',
+              function: {
+                name: rawName,
+                description: meta.description,
+                parameters: meta.parameters,
+              },
+            }
+          : undefined,
+      };
+    }
+
+    const acquireFn =
+      options.acquireFn ||
+      ((spec) => this.researchAndAcquireTool(spec));
+
+    return await acquireFn({
+      tool_name: rawName,
+      capability_needed: capability,
+      parameters_spec: options.parameters_spec,
+      suggested_implementation: options.suggested_implementation,
+      ...options.spec,
+    });
   }
 
   async checkMemPalace(toolName, capabilityQuery) {
@@ -1048,7 +1506,16 @@ export class DynamicToolManager {
 
     const capabilityQuery = spec.capability_needed || spec.capability || spec.reason || rawName;
 
-    // 1. Check if tool is already acquired and working
+    const policy = assessAcquisitionPolicy({
+      ...spec,
+      tool_name: rawName,
+      capability_needed: capabilityQuery,
+    });
+    if (!policy.allowed) {
+      return { ok: false, refused: true, error: policy.reason, ruleId: policy.ruleId };
+    }
+
+    // 1. Check if tool is already acquired and working — do not reinstall
     if (this.registry.tools[rawName] && this.registry.tools[rawName].verified) {
       return {
         ok: true,
@@ -1097,6 +1564,7 @@ export class DynamicToolManager {
       }
     }
     let testArgs = spec.test_args || {};
+    let githubPin = null;
 
     if (blueprint) {
       runtime = blueprint.runtime;
@@ -1110,8 +1578,100 @@ export class DynamicToolManager {
       scriptContent = spec.suggested_implementation;
       runtime = spec.runtime || (scriptContent.includes('import sys') ? 'python3' : 'node');
       filename = `${rawName}.${runtime === 'python3' ? 'py' : 'mjs'}`;
+    } else if (scriptContent) {
+      // MemPalace hit already populated scriptContent
+      runtime = runtime || 'python3';
+      filename = `${rawName}.${runtime === 'python3' ? 'py' : 'mjs'}`;
     } else {
-      // Synthesize general Python script with argparse and JSON output
+      // Source from public GitHub (search → pin SHA → install into tools/acquired)
+      const searchFn = spec.searchGitHubFn || searchGitHubForTool;
+      const installFn = spec.installFromGitHubFn || installFromGitHubPin;
+      let ghPin = spec.github_pin || spec.githubPin || null;
+      if (!ghPin) {
+        const ghSearch = await searchFn(capabilityQuery, {
+          tool_name: rawName,
+          description,
+          fetchFn: spec.fetchFn,
+          token: spec.githubToken,
+        });
+        if (ghSearch.ok && ghSearch.pin) {
+          ghPin = ghSearch.pin;
+        }
+      }
+      if (ghPin) {
+        const installed = await installFn(rawName, ghPin, {
+          capability_needed: capabilityQuery,
+          fetchFn: spec.fetchFn,
+          token: spec.githubToken,
+          tarballUrl: spec.tarballUrl,
+        });
+        if (installed.ok) {
+          githubPin = installed.pin;
+          runtime = installed.runtime || 'python3';
+          const rel = installed.entrypoint;
+          // Register immediately from GitHub install (skip rewrite of scriptContent)
+          if (!parameters) {
+            parameters = {
+              type: 'object',
+              properties: {
+                input: { type: 'string', description: 'Input data or command for the tool' },
+              },
+              required: [],
+              additionalProperties: true,
+            };
+          }
+          description = description || `GitHub-sourced tool from ${ghPin.fullName}@${ghPin.commitSha}`;
+          testArgs = spec.test_args || {};
+
+          // Smoke test the installed entrypoint
+          const smoke = await this.smokeTestTool(rel, runtime, testArgs);
+          if (!smoke.ok) {
+            // Fall through to local synthesis if GitHub binary is not CLI-smokeable
+            githubPin = null;
+            scriptContent = '';
+          } else {
+            this.registry.tools[rawName] = {
+              name: rawName,
+              description,
+              parameters,
+              runtime,
+              entrypoint: rel,
+              dependencies: [],
+              testArgs,
+              installedAt: Date.now(),
+              verified: true,
+              enabled: true,
+              usageCount: 0,
+              source: githubPin,
+            };
+            this.saveRegistry();
+            const toolDef = {
+              type: 'function',
+              function: {
+                name: rawName,
+                description: `[DYNAMIC TOOL] ${description}`,
+                parameters,
+              },
+            };
+            return {
+              ok: true,
+              status: 'installed_and_verified',
+              source: 'github',
+              toolName: rawName,
+              entrypoint: rel,
+              pin: githubPin,
+              message: `Tool '${rawName}' sourced from GitHub ${githubPin.fullName}@${githubPin.commitSha} into tools/acquired and hot-registered.`,
+              definition: toolDef,
+              smokeTest: {
+                exitCode: smoke.exitCode,
+                outputSummary: smoke.parsed || smoke.stdout.slice(0, 120),
+              },
+            };
+          }
+        }
+      }
+
+      // Synthesize general Python script with argparse and JSON output (fallback)
       runtime = 'python3';
       filename = `${rawName}.py`;
       const propNames = parameters?.properties ? Object.keys(parameters.properties) : ['input', 'target'];
@@ -1164,14 +1724,14 @@ if __name__ == "__main__":
 
     // 4. Install dependencies if needed
     if (spec.auto_install_deps !== false && dependencies.length > 0) {
-      const depRes = this.installDependencies(dependencies, runtime);
+      const depRes = await this.installDependencies(dependencies, runtime);
       if (!depRes.ok) {
         return { ok: false, error: `Dependency installation failed: ${depRes.error}` };
       }
     }
 
-    // 5. Pre-flight Smoke Test in Sandbox
-    const smoke = this.smokeTestTool(relEntrypoint, runtime, testArgs);
+    // 5. Pre-flight Smoke Test (sandbox preferred; host gated)
+    const smoke = await this.smokeTestTool(relEntrypoint, runtime, testArgs);
     if (!smoke.ok) {
       return {
         ok: false,
@@ -1254,7 +1814,7 @@ if __name__ == "__main__":
 
     const executable = meta.runtime === 'node' ? 'node' : 'python3';
     const t0 = performance.now();
-    const proc = spawnSync(executable, cmdArgs, { encoding: 'utf8', timeout: 30000 });
+    const proc = await runAcquiredProcess(executable, cmdArgs, { timeoutMs: 30000 });
     const durationMs = Math.round(performance.now() - t0);
 
     meta.usageCount = (meta.usageCount || 0) + 1;
@@ -1274,53 +1834,67 @@ if __name__ == "__main__":
         durationMs,
         tool: toolName,
         exitCode: proc.status,
+        via: proc.via,
       });
     }
 
     return JSON.stringify({
-      ok: proc.status === 0,
+      ok: proc.ok,
       exitCode: proc.status,
       durationMs,
       tool: toolName,
+      via: proc.via,
       stdout: proc.stdout || '',
       stderr: proc.stderr || '',
-      error: proc.status !== 0 ? (proc.stderr || 'Execution failed') : undefined,
+      error: !proc.ok ? (proc.stderr || 'Execution failed') : undefined,
     });
   }
 
   /**
    * JIT Fallback Handler: When LLM attempts to call an unregistered tool mid-response.
+   * Enforces acquisition instead of a dead-end "Unknown tool" / fake success.
    */
   async autoSynthesizeMissingTool(toolName, argsJson) {
     console.log(`[dynamic-tools] 🔍 JIT Auto-Synthesis triggered for missing tool '${toolName}'...`);
     let parsedArgs = {};
-    try { parsedArgs = typeof argsJson === 'string' ? JSON.parse(argsJson) : argsJson; } catch {}
+    try {
+      parsedArgs = typeof argsJson === 'string' ? JSON.parse(argsJson) : argsJson;
+    } catch {
+      parsedArgs = {};
+    }
 
-    const res = await this.researchAndAcquireTool({
-      tool_name: toolName,
+    const res = await this.ensureToolAvailable(toolName, {
       capability_needed: `Automatically synthesized tool for ${toolName}`,
       parameters_spec: {
         type: 'object',
-        properties: Object.keys(parsedArgs).reduce((acc, k) => {
-          acc[k] = { type: typeof parsedArgs[k] === 'number' ? 'number' : 'string', description: k };
+        properties: Object.keys(parsedArgs || {}).reduce((acc, k) => {
+          acc[k] = {
+            type: typeof parsedArgs[k] === 'number' ? 'number' : 'string',
+            description: k,
+          };
           return acc;
         }, {}),
       },
-      test_args: parsedArgs,
+      spec: { test_args: parsedArgs },
     });
 
     if (!res.ok) {
       return {
         ok: false,
-        error: `Could not JIT-acquire tool '${toolName}': ${res.error}`,
+        refused: Boolean(res.refused),
+        error: res.refused
+          ? res.error
+          : `Could not JIT-acquire tool '${toolName}': ${res.error}`,
+        ruleId: res.ruleId,
       };
     }
 
-    // Immediately execute the call with the supplied arguments
+    // If just acquired (or already present), execute with the supplied arguments
     const execResult = await this.executeTool(toolName, argsJson);
     return {
       ok: true,
-      jitAcquired: true,
+      jitAcquired: !res.alreadyInstalled,
+      alreadyInstalled: Boolean(res.alreadyInstalled),
       toolName,
       definition: res.definition,
       executionResult: execResult,

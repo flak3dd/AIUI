@@ -33,6 +33,7 @@ import {
   looksLikeKnowledgeQuery,
   formatAgentResponseAsDevin,
 } from './lib/agent'
+import { enforceAutomateCue, hasAutomateCue } from './lib/wordCues'
 import {
   getWorkflowContextTools,
   loadDynamicToolRegistry,
@@ -213,6 +214,7 @@ function MainApp() {
     terminalVisible: boolean
     toggleTerminal: () => void
     newBrowser: () => void
+    attachBrowserSession?: (meta: { sessionId?: string; url?: string }) => void
     browserCount: number
     browserCap: number
     browserWindows: Array<{ id: string; label: string; sessionId?: string; url?: string }>
@@ -1207,6 +1209,23 @@ function MainApp() {
     const effectivePrompt = isOptimize ? expandOptimizePrompt(text) : text
     const displayUserText = isOptimize && !text.startsWith('⚡') ? `⚡ ${text}` : text
 
+    // Code wins: "automate" cue must start headed browser automation via nl-command (not model-only).
+    let automateCueNote = ''
+    const cueResult = await enforceAutomateCue(effectivePrompt)
+    if (cueResult.triggered) {
+      if (cueResult.started && cueResult.sessionId) {
+        workChromeRef.current?.attachBrowserSession?.({
+          sessionId: cueResult.sessionId,
+          url: cueResult.url || cueResult.text,
+        })
+        automateCueNote = `\n\n[WORD CUE ENFORCEMENT — automate]\nHeaded Playwright Chromium already started (sessionId=${cueResult.sessionId}). Continue with nl_automate / browser_* tools; do not only describe automation. HTTP 200 is not proof.`
+      } else if (cueResult.error) {
+        automateCueNote = `\n\n[WORD CUE ENFORCEMENT — automate]\n${cueResult.error}`
+      } else {
+        automateCueNote = `\n\n[WORD CUE ENFORCEMENT — automate]\nAutomate cue was present; call nl_automate now if the browser pane is not yet open.`
+      }
+    }
+
     const userMsg: UiMessage = {
       id: uid(),
       role: 'user',
@@ -1224,7 +1243,7 @@ function MainApp() {
       sessionId: activeSessionId || undefined,
     })
 
-    const isAgent = settings.agentMode || isOptimize
+    const isAgent = settings.agentMode || isOptimize || hasAutomateCue(effectivePrompt)
     if (isAgent) {
       try {
         await fetch('/api/agent-runs', {
@@ -1253,6 +1272,9 @@ function MainApp() {
         stage: 'discovery',
         round: 1,
       })}`
+    }
+    if (automateCueNote) {
+      effectiveSystem = `${effectiveSystem}${automateCueNote}`
     }
     working.push({ role: 'system', content: effectiveSystem })
 
